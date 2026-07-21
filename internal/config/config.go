@@ -66,6 +66,7 @@ type AppConfig struct {
 	IssueBranchNameTemplate string // Template for issue branch names with placeholders: {number}, {title} (default: "issue-{number}-{title}")
 	PRBranchNameTemplate    string // Template for PR branch names with placeholders: {number}, {title}, {generated}, {pr_author} (default: "pr-{number}-{title}")
 	SessionPrefix           string // Prefix for tmux/zellij session names (default: "wt-")
+	AgentCommand            string // Command launched in a tmux session when opening an agent for a worktree (default: "claude")
 	Layout                  string // Pane arrangement: "default" or "top" (default: "default")
 	PruneStaleBranches      bool   // Include merged branches without worktrees in prune (default: false)
 	PaletteMRU              bool   // Enable MRU sorting for command palette (default: false)
@@ -110,6 +111,7 @@ func DefaultConfig() *AppConfig {
 		IssueBranchNameTemplate: "issue-{number}-{title}",
 		PRBranchNameTemplate:    "pr-{number}-{title}",
 		SessionPrefix:           "wt-",
+		AgentCommand:            "claude",
 		Layout:                  "default",
 		PaletteMRU:              true,
 		PaletteMRULimit:         5,
@@ -380,6 +382,13 @@ func parseConfig(data map[string]any) (*AppConfig, error) {
 		}
 	}
 
+	if agentCommand, ok := data["agent_command"].(string); ok {
+		agentCommand = strings.TrimSpace(agentCommand)
+		if agentCommand != "" {
+			cfg.AgentCommand = agentCommand
+		}
+	}
+
 	cfg.PaletteMRU = coerceBool(data["palette_mru"], true)
 	cfg.PaletteMRULimit = coerceInt(data["palette_mru_limit"], 5)
 	if cfg.PaletteMRULimit <= 0 {
@@ -620,6 +629,9 @@ func (cfg *AppConfig) ApplyCLIOverrides(overrides []string) error {
 	}
 	if _, ok := overrideData["session_prefix"]; ok {
 		cfg.SessionPrefix = overrideCfg.SessionPrefix
+	}
+	if _, ok := overrideData["agent_command"]; ok {
+		cfg.AgentCommand = overrideCfg.AgentCommand
 	}
 	if overrideNestedData(overrideData, "agent_sessions", "claude_root") {
 		cfg.AgentSessionClaudeRoot = overrideCfg.AgentSessionClaudeRoot

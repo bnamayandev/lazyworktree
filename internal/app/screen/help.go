@@ -61,7 +61,8 @@ func NewHelpScreen(maxWidth, maxHeight int, customCommands config.CustomCommands
 - [ / ]: Previous / Next pane
 - Tab: Cycle to next pane
 - L: Toggle layout (default / top)
-- Enter: Jump to selected worktree (exit and cd)
+- Enter: Open an agent session (runs agent_command, default claude) rooted at the selected worktree, continuing an existing conversation when there is one. Runs in a persistent tmux session that keeps working in the background; a floating pane under zellij
+- a: Jump to selected worktree (exit and cd)
 - q: Quit application
 
 **{{HELP_STATUS_PANE}}Info Pane (when focused)**
@@ -88,6 +89,9 @@ func NewHelpScreen(maxWidth, maxHeight int, customCommands config.CustomCommands
 - 6: Focus agent sessions pane (or toggle zoom if already focused)
 - When no active session is open, pressing 6 reveals recent and historical matching sessions
 - Tab includes pane 6 at the end of the cycle when visible
+- State indicators: spinner = still working; ? = waiting on your input; ‼ = waiting on a tool approval; green ● = finished a request you have not viewed; grey ● = viewed or nothing outstanding
+- Selecting a session marks it viewed, settling a green indicator back to grey
+- Distinct from the worktree Status column, which reports changes and ahead/behind counts
 
 **{{HELP_CI_CHECKS}}Git Status Pane (when focused)**
 - j / k: Navigate files and directories

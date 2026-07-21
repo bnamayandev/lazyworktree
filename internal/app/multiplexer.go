@@ -224,6 +224,183 @@ func buildTmuxWindowCommand(command string, env map[string]string) string {
 	return multiplexer.BuildTmuxWindowCommand(command, env)
 }
 
+// openAgentForSelectedWorktree opens an agent session for the currently
+// selected worktree, if any.
+func (m *Model) openAgentForSelectedWorktree() tea.Cmd {
+	if m.state.data.selectedIndex < 0 || m.state.data.selectedIndex >= len(m.state.data.filteredWts) {
+		return nil
+	}
+	return m.openAgentSession(m.state.data.filteredWts[m.state.data.selectedIndex])
+}
+
+// agentCommand returns the configured agent command, defaulting to "claude".
+func (m *Model) agentCommand() string {
+	agentCmd := strings.TrimSpace(m.config.AgentCommand)
+	if agentCmd == "" {
+		agentCmd = "claude"
+	}
+	return agentCmd
+}
+
+// worktreeHasAgentSession reports whether Claude has a conversation rooted at
+// the worktree itself, meaning there is something for "--continue" to resume.
+//
+// The match is deliberately stricter than SessionsForWorktree: that helper also
+// reports sessions from subdirectories and from other agents, whereas
+// "--continue" only finds conversations recorded against the exact directory we
+// launch in and errors out otherwise.
+func (m *Model) worktreeHasAgentSession(wt *models.WorktreeInfo) bool {
+	if wt == nil || !m.agentSessionsEnabled() {
+		return false
+	}
+	service := m.state.services.agentSessions
+	if service == nil {
+		return false
+	}
+	return hasResumableClaudeSession(service.SessionsForWorktree(wt.Path), wt.Path)
+}
+
+// hasResumableClaudeSession reports whether any session is a Claude
+// conversation recorded against the worktree directory itself.
+func hasResumableClaudeSession(sessions []*models.AgentSession, worktreePath string) bool {
+	root := filepath.Clean(strings.TrimSpace(worktreePath))
+	if root == "" || root == "." {
+		return false
+	}
+	for _, session := range sessions {
+		if session == nil || session.Agent != models.AgentKindClaude {
+			continue
+		}
+		if filepath.Clean(strings.TrimSpace(session.CWD)) == root {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveAgentCommand continues an existing conversation rather than starting a
+// fresh one when the worktree already has a transcript. Only Claude is
+// special-cased, since "--continue" is its flag, and the command is left alone
+// when it already asks to resume or when there is nothing to continue, because
+// "--continue" errors out with no prior conversation.
+func resolveAgentCommand(base string, hasSession bool) string {
+	fields := strings.Fields(base)
+	if len(fields) == 0 || filepath.Base(fields[0]) != "claude" {
+		return base
+	}
+	for _, field := range fields[1:] {
+		switch field {
+		case "-c", "--continue", "-r", "--resume":
+			return base
+		}
+	}
+	if !hasSession {
+		return base
+	}
+	return base + " --continue"
+}
+
+// agentCommandForWorktree resolves the command to launch for a worktree.
+func (m *Model) agentCommandForWorktree(wt *models.WorktreeInfo) string {
+	return resolveAgentCommand(m.agentCommand(), m.worktreeHasAgentSession(wt))
+}
+
+// agentTmuxSessionName is the persistent tmux session backing a worktree's
+// agent. Both the zellij and the plain-terminal paths converge on this name so
+// that Enter always re-attaches to the same running agent.
+func (m *Model) agentTmuxSessionName(wt *models.WorktreeInfo) string {
+	return sanitizeTmuxSessionName(m.config.SessionPrefix + filepath.Base(wt.Path))
+}
+
+// openAgentSession launches the configured agent command (default "claude") for
+// the worktree, backed by a persistent detached tmux session so the agent keeps
+// running in the background once the viewer goes away. Inside zellij the
+// session is shown in a large floating pane that overlays the TUI without
+// suspending it; otherwise tmux is attached in place.
+func (m *Model) openAgentSession(wt *models.WorktreeInfo) tea.Cmd {
+	if wt == nil {
+		return nil
+	}
+	_, tmuxErr := exec.LookPath("tmux")
+	hasTmux := tmuxErr == nil
+
+	if os.Getenv("ZELLIJ") != "" || os.Getenv("ZELLIJ_SESSION_NAME") != "" {
+		return m.openAgentFloatingZellij(wt, hasTmux)
+	}
+	if !hasTmux {
+		m.showInfo("Neither zellij nor tmux is available to open an agent session.", nil)
+		return nil
+	}
+	customCmd := &config.CustomCommand{
+		Description: filepath.Base(wt.Path),
+		Tmux: &config.TmuxCommand{
+			Attach: true,
+			// "switch" re-uses a running session (switch-client when already
+			// inside tmux, attach otherwise) so the agent survives between
+			// visits instead of being restarted.
+			OnExists: "switch",
+			Windows: []config.TmuxWindow{{
+				Name:    "agent",
+				Command: m.agentCommandForWorktree(wt),
+				Cwd:     wt.Path,
+			}},
+		},
+	}
+	return m.openTmuxSession(customCmd, wt)
+}
+
+// buildAgentPaneCommand returns the argv the floating zellij pane runs. When
+// tmux is available the agent is wrapped in a persistent "new-session -A"
+// so that closing the pane, or quitting zellij outright with Ctrl+Q, leaves the
+// agent running under the tmux server to be re-attached later. Without tmux the
+// agent runs directly in the pane, which cannot survive a zellij shutdown.
+func (m *Model) buildAgentPaneCommand(wt *models.WorktreeInfo, hasTmux bool) []string {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "bash"
+	}
+	agentCmd := m.agentCommandForWorktree(wt)
+	if !hasTmux {
+		return []string{shell, "-lc", agentCmd}
+	}
+	return []string{
+		"tmux", "new-session", "-A",
+		"-s", m.agentTmuxSessionName(wt),
+		"-c", wt.Path,
+		shell, "-lc", agentCmd,
+	}
+}
+
+// openAgentFloatingZellij opens the agent in a large (90%) centred floating
+// zellij pane rooted at the worktree. The pane overlays the TUI without
+// suspending it; hide it with zellij's floating-pane toggle to send the agent
+// to the background while it keeps running.
+func (m *Model) openAgentFloatingZellij(wt *models.WorktreeInfo, hasTmux bool) tea.Cmd {
+	if _, err := exec.LookPath("zellij"); err != nil {
+		m.showInfo("zellij is not installed. Install it from https://zellij.dev to open agent sessions.", nil)
+		return nil
+	}
+	env := m.buildCommandEnvForWorktree(wt)
+	name := "agent:" + filepath.Base(wt.Path)
+	args := []string{
+		"action", "new-pane", "--floating",
+		"--width", "90%", "--height", "90%", "--x", "5%", "--y", "5%",
+		"--close-on-exit", "--name", name, "--cwd", wt.Path,
+		"--",
+	}
+	args = append(args, m.buildAgentPaneCommand(wt, hasTmux)...)
+	// #nosec G204 -- cwd is a managed worktree path; the agent command comes from user configuration.
+	c := m.commandRunner(m.ctx, "zellij", args...)
+	c.Dir = wt.Path
+	c.Env = services.AppendCommandEnv(os.Environ(), env)
+	return func() tea.Msg {
+		if err := c.Run(); err != nil {
+			return errMsg{err: fmt.Errorf("failed to open agent pane: %w", err)}
+		}
+		return nil
+	}
+}
+
 func (m *Model) openTmuxSession(customCmd *config.CustomCommand, wt *models.WorktreeInfo) tea.Cmd {
 	if customCmd == nil || customCmd.Tmux == nil {
 		return nil

@@ -3,6 +3,7 @@ package app
 import (
 	"image/color"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -10,6 +11,10 @@ import (
 	"github.com/chmouel/lazyworktree/internal/app/services"
 	"github.com/chmouel/lazyworktree/internal/models"
 )
+
+// agentSpinnerInterval paces the busy state indicator. The tick loop only
+// runs while a visible session is working, so this costs nothing at idle.
+const agentSpinnerInterval = 120 * time.Millisecond
 
 type agentRenderStyles struct {
 	prefix    lipgloss.Style
@@ -29,6 +34,99 @@ func (m *Model) agentRenderStyles() agentRenderStyles {
 
 func (m *Model) agentSessionsEnabled() bool {
 	return m.config == nil || !m.config.AgentSessionsDisabled
+}
+
+// agentSessionKey returns a stable identity for a session across refreshes.
+func agentSessionKey(session *models.AgentSession) string {
+	if session == nil {
+		return ""
+	}
+	if strings.TrimSpace(session.SessionKey) != "" {
+		return session.SessionKey
+	}
+	if strings.TrimSpace(session.ID) != "" {
+		return session.ID
+	}
+	return session.JSONLPath
+}
+
+// observeAgentSessions seeds the seen-at map for sessions met for the first
+// time, so only activity occurring while LazyWorktree is running is flagged as
+// unviewed. Without this every pre-existing transcript would light up green on
+// start-up.
+func (m *Model) observeAgentSessions(sessions []*models.AgentSession) {
+	if m.state.data.agentSessionSeenAt == nil {
+		m.state.data.agentSessionSeenAt = make(map[string]time.Time, len(sessions))
+	}
+	for _, session := range sessions {
+		key := agentSessionKey(session)
+		if key == "" {
+			continue
+		}
+		if _, ok := m.state.data.agentSessionSeenAt[key]; !ok {
+			m.state.data.agentSessionSeenAt[key] = session.LastActivity
+		}
+	}
+}
+
+// agentSessionUnviewed reports whether a session has advanced since the user
+// last looked at it.
+func (m *Model) agentSessionUnviewed(session *models.AgentSession) bool {
+	key := agentSessionKey(session)
+	if key == "" {
+		return false
+	}
+	seenAt, ok := m.state.data.agentSessionSeenAt[key]
+	if !ok {
+		return false
+	}
+	return session.LastActivity.After(seenAt)
+}
+
+// markAgentSessionViewed records that the user has seen the session's current
+// state, moving its indicator from green back to grey.
+func (m *Model) markAgentSessionViewed(session *models.AgentSession) {
+	key := agentSessionKey(session)
+	if key == "" {
+		return
+	}
+	if m.state.data.agentSessionSeenAt == nil {
+		m.state.data.agentSessionSeenAt = make(map[string]time.Time)
+	}
+	seenAt := session.LastActivity
+	if now := time.Now(); now.After(seenAt) {
+		seenAt = now
+	}
+	m.state.data.agentSessionSeenAt[key] = seenAt
+}
+
+// anyVisibleAgentBusy reports whether a currently rendered session is still
+// working. This gates the spinner tick loop so idle CPU stays at zero.
+func (m *Model) anyVisibleAgentBusy() bool {
+	for _, session := range m.state.data.agentSessions {
+		if session != nil && agentBusy(session.Activity) {
+			return true
+		}
+	}
+	return false
+}
+
+// agentSpinnerTick schedules the next frame of the busy indicator.
+func (m *Model) agentSpinnerTick() tea.Cmd {
+	return tea.Tick(agentSpinnerInterval, func(time.Time) tea.Msg {
+		return agentSpinnerTickMsg{}
+	})
+}
+
+// advanceAgentSpinner steps the animation and repaints the pane from the
+// snapshot already in hand, avoiding a session-service query per frame.
+func (m *Model) advanceAgentSpinner() {
+	m.state.ui.agentSpinnerFrame++
+	if len(m.state.data.agentSessions) == 0 {
+		return
+	}
+	m.agentSessionsContent = m.buildAgentSessionsContent(m.state.data.agentSessions)
+	m.state.ui.agentSessionsViewport.SetContent(m.agentSessionsContent)
 }
 
 // agentSessionsEqual reports whether two session snapshots carry identical
@@ -178,6 +276,11 @@ func (m *Model) refreshSelectedWorktreeAgentSessionsPane() {
 	if m.state.data.agentSessionIndex < 0 {
 		m.state.data.agentSessionIndex = 0
 	}
+	// Looking at a session in the focused pane counts as viewing it, which is
+	// what clears the green "finished" indicator back to grey.
+	if m.state.view.FocusedPane == paneAgentSessions {
+		m.markAgentSessionViewed(selected[m.state.data.agentSessionIndex])
+	}
 	m.agentSessionsContent = m.buildAgentSessionsContent(selected)
 	m.state.ui.agentSessionsViewport.SetContent(m.agentSessionsContent)
 	m.syncAgentSessionsViewport()
@@ -295,7 +398,7 @@ func (m *Model) renderAgentSessionRight(session *models.AgentSession) string {
 		return ""
 	}
 	styles := m.agentRenderStyles()
-	parts := []string{m.renderAgentSessionActivityBadge(session)}
+	parts := []string{m.renderAgentSessionStateIndicator(session)}
 	if badge := m.renderAgentSessionLivenessBadge(session); badge != "" {
 		parts = append(parts, badge)
 	}
@@ -303,28 +406,76 @@ func (m *Model) renderAgentSessionRight(session *models.AgentSession) string {
 	return strings.Join(parts, " ")
 }
 
-func (m *Model) renderAgentSessionActivityBadge(session *models.AgentSession) string {
+// agentBusy reports whether the agent is actively working on the previous
+// request, covering reasoning, context compaction and every tool activity.
+func agentBusy(activity models.AgentActivity) bool {
+	switch activity {
+	case models.AgentActivityThinking,
+		models.AgentActivityCompacting,
+		models.AgentActivityReading,
+		models.AgentActivityWriting,
+		models.AgentActivityRunning,
+		models.AgentActivitySearching,
+		models.AgentActivityBrowsing,
+		models.AgentActivitySpawning:
+		return true
+	default:
+		return false
+	}
+}
+
+// agentSpinnerFrames returns the animation frames for the busy indicator,
+// falling back to plain ASCII when icons are disabled.
+func (m *Model) agentSpinnerFrames() []string {
+	if m.config != nil && !m.config.IconsEnabled() {
+		return []string{"|", "/", "-", "\\"}
+	}
+	return []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+}
+
+// agentStateGlyph resolves a state glyph, honouring the icon set so that
+// text-only configurations still render something meaningful.
+func (m *Model) agentStateGlyph(icon, ascii string) string {
+	if m.config != nil && !m.config.IconsEnabled() {
+		return ascii
+	}
+	return icon
+}
+
+// renderAgentSessionStateIndicator renders the compact state glyph for a
+// session:
+//
+//	spinner  the agent is still working on the last request
+//	?        waiting on your input or a clarification
+//	‼        waiting on a tool approval
+//	● green  finished a request you have not looked at yet
+//	● grey   the change has been viewed
+//	·        idle with nothing outstanding
+func (m *Model) renderAgentSessionStateIndicator(session *models.AgentSession) string {
 	if session == nil {
 		return ""
 	}
-	bg := m.theme.Accent
-	switch session.Activity {
-	case models.AgentActivityIdle:
-		bg = m.theme.BorderDim
-	case models.AgentActivityWaiting:
-		bg = m.theme.Cyan
-	case models.AgentActivityApproval:
-		bg = m.theme.WarnFg
-	case models.AgentActivityThinking, models.AgentActivityCompacting:
-		bg = m.theme.Accent
-	case models.AgentActivityReading, models.AgentActivitySearching, models.AgentActivityBrowsing:
-		bg = m.theme.Cyan
-	case models.AgentActivityWriting, models.AgentActivityRunning:
-		bg = m.theme.WarnFg
-	case models.AgentActivitySpawning:
-		bg = m.theme.SuccessFg
+	glyph, fg := m.agentSessionState(session)
+	return lipgloss.NewStyle().Foreground(fg).Bold(true).Render(glyph)
+}
+
+// agentSessionStatus maps a session onto its status glyph and theme colour.
+func (m *Model) agentSessionState(session *models.AgentSession) (string, color.Color) {
+	switch {
+	case agentBusy(session.Activity):
+		frames := m.agentSpinnerFrames()
+		return frames[m.state.ui.agentSpinnerFrame%len(frames)], m.theme.Accent
+	case session.Activity == models.AgentActivityWaiting:
+		return m.agentStateGlyph("?", "?"), m.theme.WarnFg
+	case session.Activity == models.AgentActivityApproval:
+		return m.agentStateGlyph("‼", "!"), m.theme.WarnFg
+	case m.agentSessionUnviewed(session):
+		return m.agentStateGlyph("●", "*"), m.theme.SuccessFg
+	case session.LastActivity.IsZero():
+		return m.agentStateGlyph("·", "."), m.theme.MutedFg
+	default:
+		return m.agentStateGlyph("●", "*"), m.theme.MutedFg
 	}
-	return m.renderAgentSessionBadge(string(session.Activity), bg, m.theme.AccentFg)
 }
 
 func (m *Model) renderAgentSessionBadge(label string, bg, fg color.Color) string {

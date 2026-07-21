@@ -53,11 +53,24 @@ Press `=` to toggle zoom for the focused pane, expanding it to fill the entire s
 Agent Sessions is the final pane in the Tab cycle when visible, even though it is rendered above Notes.
 By default the pane shows only sessions with a live Claude/pi process match; press `A` in the pane to include offline history, and press `6` to reveal historical matches when nothing is currently open.
 
+Each session carries a state indicator. This is distinct from the worktree list's Status column, which reports working-tree and ahead/behind counts:
+
+| State | Meaning |
+| --- | --- |
+| Animated spinner (accent) | The agent is still working on your last request — reasoning, compacting, reading, writing, running a command, searching, browsing or delegating |
+| `?` (amber) | The agent is waiting on your input or a clarification |
+| `‼` (amber) | The agent is waiting on a tool approval |
+| `●` (green) | The agent finished a request you have not looked at yet |
+| `●` (grey) | The change has been viewed, or nothing is outstanding |
+
+Selecting a session in the focused pane marks it as viewed, which settles a green indicator back to grey. Indicators fall back to `|`, `?`, `!` and `*` when icons are disabled.
+
 ## Pane-Specific Actions
 
 ### Worktree Pane
 
-- `Enter` — jump to selected worktree (exits LazyWorktree and outputs the path)
+- `Enter` — open an agent session (`agent_command`, default `claude`) rooted at the selected worktree, continuing the worktree's existing conversation when there is one and starting a fresh one otherwise. The agent runs in a persistent tmux session, so it keeps working in the background once you close the viewer; pressing `Enter` again re-attaches. Under zellij it is shown in a large floating pane that overlays the interface without suspending it
+- `a` — jump to the selected worktree (exits LazyWorktree and outputs the path for the shell integration)
 - `s` — cycle sort mode: Path, Last Active (commit date), Last Switched (access time)
 - `e` — edit worktree metadata for the selected worktree (description, colour, notes, icon, tags)
 - Command palette only: **Set worktree colour** (picker plus `Custom…` for hex, supported named colours, or 256 indices)

@@ -149,6 +149,8 @@ func (m *Model) renderFooter(layout layoutDims) string {
 			}
 			actionGroup = append(actionGroup, m.renderKeyHint("o", openLabel))
 		}
+		actionGroup = append(actionGroup, m.renderKeyHint("Enter", "Agent"))
+		actionGroup = append(actionGroup, m.renderKeyHint("a", "Jump"))
 		actionGroup = append(actionGroup, m.customFooterHints()...)
 		globalGroup := []string{
 			m.renderKeyHint("q", "Quit"),

@@ -99,6 +99,7 @@ type (
 	}
 	agentWatchChangedMsg  struct{}
 	agentRefreshDueMsg    struct{}
+	agentSpinnerTickMsg   struct{}
 	deprecationWarningMsg struct{}
 	debouncedDetailsMsg   struct {
 		selectedIndex int
@@ -305,6 +306,8 @@ type uiState struct {
 	filterInput           textinput.Model
 	spinner               spinner.Model
 	spinnerActive         bool // whether the spinner tick loop is running (only while loading)
+	agentSpinnerFrame     int  // animation frame for the agent "busy" status indicator
+	agentSpinnerActive    bool // whether the agent spinner tick loop is running (only while an agent is busy)
 	screenManager         *screen.Manager
 }
 
@@ -319,8 +322,14 @@ type dataState struct {
 	agentSessions         []*models.AgentSession
 	agentSessionsSnapshot []*models.AgentSession // last full refresh result, for change detection
 	agentSessionIndex     int
-	logEntries            []commitLogEntry
-	logEntriesAll         []commitLogEntry
+	// agentSessionSeenAt records, per session key, the activity timestamp the
+	// user has already seen. A session whose LastActivity is newer than this
+	// has unviewed changes and is flagged for attention; viewing it clears the
+	// flag. Sessions are seeded on first observation so pre-existing
+	// transcripts do not all light up on start-up.
+	agentSessionSeenAt map[string]time.Time
+	logEntries         []commitLogEntry
+	logEntriesAll      []commitLogEntry
 }
 
 type servicesState struct {
@@ -672,6 +681,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mm.state.ui.spinnerActive = true
 		cmd = tea.Batch(cmd, mm.state.ui.spinner.Tick)
 	}
+	// Same treatment for the agent busy indicator: the loop is started only
+	// when a visible session is working and self-stops once they all settle,
+	// so a quiet agent pane costs nothing.
+	if !mm.state.ui.agentSpinnerActive && mm.anyVisibleAgentBusy() {
+		mm.state.ui.agentSpinnerActive = true
+		cmd = tea.Batch(cmd, mm.agentSpinnerTick())
+	}
 	return mm, cmd
 }
 
@@ -737,10 +753,24 @@ func (m *Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Skip the pane rebuild when the refresh produced an identical
 		// snapshot, which is the common case on idle ticks.
 		if msg.err == nil && !agentSessionsEqual(m.state.data.agentSessionsSnapshot, msg.sessions) {
+			// Seed every session, not just the selected worktree's, so an agent
+			// that finishes while another worktree is selected is still flagged
+			// as unviewed when you navigate to it.
+			m.observeAgentSessions(msg.sessions)
 			m.state.data.agentSessionsSnapshot = msg.sessions
 			m.refreshSelectedWorktreeAgentSessionsPane()
 		}
 		return m, nil
+
+	case agentSpinnerTickMsg:
+		if !m.anyVisibleAgentBusy() {
+			// Nothing is working: stop the loop rather than repaint forever.
+			// The Update wrapper restarts it when an agent next goes busy.
+			m.state.ui.agentSpinnerActive = false
+			return m, nil
+		}
+		m.advanceAgentSpinner()
+		return m, m.agentSpinnerTick()
 
 	case agentWatchChangedMsg:
 		if m.state.services.agentWatch != nil {

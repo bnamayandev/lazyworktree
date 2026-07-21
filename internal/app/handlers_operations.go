@@ -171,6 +171,16 @@ func (m *Model) handleOperationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, boo
 		return m, nil, true
 	case "T":
 		return m, m.showTaskboard(), true
+	case "a":
+		if m.state.view.FocusedPane == paneWorktrees && m.state.data.selectedIndex >= 0 && m.state.data.selectedIndex < len(m.state.data.filteredWts) {
+			selectedPath := m.state.data.filteredWts[m.state.data.selectedIndex].Path
+			m.persistLastSelected(selectedPath)
+			m.selectedPath = selectedPath
+			m.stopGitWatcher()
+			m.stopAgentWatcher()
+			return m, tea.Quit, true
+		}
+		return m, nil, true
 	case "A":
 		if m.state.view.FocusedPane == paneAgentSessions {
 			m.state.view.ShowAllAgentSessions = !m.state.view.ShowAllAgentSessions
@@ -200,14 +210,7 @@ func (m *Model) handleOperationKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, boo
 func (m *Model) handleEnterKey() (tea.Model, tea.Cmd) {
 	switch m.state.view.FocusedPane {
 	case paneWorktrees:
-		if m.state.data.selectedIndex >= 0 && m.state.data.selectedIndex < len(m.state.data.filteredWts) {
-			selectedPath := m.state.data.filteredWts[m.state.data.selectedIndex].Path
-			m.persistLastSelected(selectedPath)
-			m.selectedPath = selectedPath
-			m.stopGitWatcher()
-			m.stopAgentWatcher()
-			return m, tea.Quit
-		}
+		return m, m.openAgentForSelectedWorktree()
 	case paneInfo:
 		ciChecks, hasCIChecks := m.getCIChecksForCurrentWorktree()
 		if hasCIChecks && m.ciCheckIndex >= 0 && m.ciCheckIndex < len(ciChecks) {

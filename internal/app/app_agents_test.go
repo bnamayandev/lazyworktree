@@ -1,6 +1,7 @@
 package app
 
 import (
+	"image/color"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,7 +10,152 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/chmouel/lazyworktree/internal/config"
 	"github.com/chmouel/lazyworktree/internal/models"
+	"github.com/stretchr/testify/assert"
 )
+
+func TestAgentSessionStateIndicatorGlyphs(t *testing.T) {
+	cfg := &config.AppConfig{WorktreeDir: t.TempDir(), IconSet: "nerd-font-v3"}
+	m := NewModel(cfg, "")
+
+	tests := []struct {
+		name     string
+		activity models.AgentActivity
+		glyph    string
+		colour   color.Color
+	}{
+		{"thinking spins", models.AgentActivityThinking, "⠋", m.theme.Accent},
+		{"compacting spins", models.AgentActivityCompacting, "⠋", m.theme.Accent},
+		{"writing spins", models.AgentActivityWriting, "⠋", m.theme.Accent},
+		{"running spins", models.AgentActivityRunning, "⠋", m.theme.Accent},
+		{"searching spins", models.AgentActivitySearching, "⠋", m.theme.Accent},
+		{"spawning spins", models.AgentActivitySpawning, "⠋", m.theme.Accent},
+		{"waiting on input asks", models.AgentActivityWaiting, "?", m.theme.WarnFg},
+		{"waiting on approval warns", models.AgentActivityApproval, "‼", m.theme.WarnFg},
+		{"settled session is grey", models.AgentActivityIdle, "●", m.theme.MutedFg},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &models.AgentSession{
+				ID:           "session",
+				Activity:     tt.activity,
+				LastActivity: time.Now(),
+			}
+			glyph, colour := m.agentSessionState(session)
+			assert.Equal(t, tt.glyph, glyph)
+			assert.Equal(t, tt.colour, colour)
+		})
+	}
+}
+
+func TestAgentSessionStateIndicatorFallsBackToASCII(t *testing.T) {
+	cfg := &config.AppConfig{WorktreeDir: t.TempDir()} // icons disabled
+	m := NewModel(cfg, "")
+
+	tests := []struct {
+		name     string
+		activity models.AgentActivity
+		glyph    string
+	}{
+		{"busy", models.AgentActivityThinking, "|"},
+		{"waiting", models.AgentActivityWaiting, "?"},
+		{"approval", models.AgentActivityApproval, "!"},
+		{"settled", models.AgentActivityIdle, "*"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &models.AgentSession{ID: "s", Activity: tt.activity, LastActivity: time.Now()}
+			glyph, _ := m.agentSessionState(session)
+			assert.Equal(t, tt.glyph, glyph)
+		})
+	}
+}
+
+func TestAgentSessionUnviewedLifecycle(t *testing.T) {
+	cfg := &config.AppConfig{WorktreeDir: t.TempDir(), IconSet: "nerd-font-v3"}
+	m := NewModel(cfg, "")
+
+	started := time.Now().Add(-time.Minute)
+	session := &models.AgentSession{
+		ID:           "session",
+		Activity:     models.AgentActivityThinking,
+		LastActivity: started,
+	}
+
+	// First sight seeds a baseline so pre-existing transcripts stay quiet.
+	m.observeAgentSessions([]*models.AgentSession{session})
+	assert.False(t, m.agentSessionUnviewed(session), "a freshly observed session must not be flagged")
+
+	// The agent finishes the request, advancing past the baseline.
+	finished := &models.AgentSession{
+		ID:           "session",
+		Activity:     models.AgentActivityIdle,
+		LastActivity: time.Now(),
+	}
+	assert.True(t, m.agentSessionUnviewed(finished), "a completed request should be flagged for attention")
+
+	glyph, colour := m.agentSessionState(finished)
+	assert.Equal(t, "●", glyph)
+	assert.Equal(t, m.theme.SuccessFg, colour, "an unviewed completion should be green")
+
+	// Viewing the chat settles it back to grey.
+	m.markAgentSessionViewed(finished)
+	assert.False(t, m.agentSessionUnviewed(finished))
+	_, colour = m.agentSessionState(finished)
+	assert.Equal(t, m.theme.MutedFg, colour, "a viewed change should be grey")
+}
+
+func TestObserveAgentSessionsKeepsExistingBaseline(t *testing.T) {
+	cfg := &config.AppConfig{WorktreeDir: t.TempDir()}
+	m := NewModel(cfg, "")
+
+	session := &models.AgentSession{ID: "session", LastActivity: time.Now().Add(-time.Hour)}
+	m.observeAgentSessions([]*models.AgentSession{session})
+	m.markAgentSessionViewed(session)
+
+	// A later refresh must not reset the baseline and re-flag a viewed session.
+	advanced := &models.AgentSession{ID: "session", LastActivity: session.LastActivity}
+	m.observeAgentSessions([]*models.AgentSession{advanced})
+	assert.False(t, m.agentSessionUnviewed(advanced))
+}
+
+func TestAnyVisibleAgentBusyGatesSpinnerLoop(t *testing.T) {
+	cfg := &config.AppConfig{WorktreeDir: t.TempDir()}
+	m := NewModel(cfg, "")
+
+	assert.False(t, m.anyVisibleAgentBusy(), "no sessions means no tick loop")
+
+	m.state.data.agentSessions = []*models.AgentSession{
+		{ID: "a", Activity: models.AgentActivityIdle},
+		{ID: "b", Activity: models.AgentActivityWaiting},
+	}
+	assert.False(t, m.anyVisibleAgentBusy(), "settled sessions must not spin the loop")
+
+	m.state.data.agentSessions = append(m.state.data.agentSessions,
+		&models.AgentSession{ID: "c", Activity: models.AgentActivityRunning})
+	assert.True(t, m.anyVisibleAgentBusy(), "a working session should start the loop")
+}
+
+func TestAdvanceAgentSpinnerCyclesFrames(t *testing.T) {
+	cfg := &config.AppConfig{WorktreeDir: t.TempDir(), IconSet: "nerd-font-v3"}
+	m := NewModel(cfg, "")
+	m.state.ui.agentSessionsViewport.SetWidth(80)
+	session := &models.AgentSession{ID: "s", Activity: models.AgentActivityThinking, LastActivity: time.Now()}
+	m.state.data.agentSessions = []*models.AgentSession{session}
+
+	first, _ := m.agentSessionState(session)
+	m.advanceAgentSpinner()
+	second, _ := m.agentSessionState(session)
+
+	assert.NotEqual(t, first, second, "the busy indicator should animate between frames")
+
+	// The frame index must wrap rather than run off the end of the frame set.
+	m.state.ui.agentSpinnerFrame = len(m.agentSpinnerFrames()) - 1
+	m.advanceAgentSpinner()
+	wrapped, _ := m.agentSessionState(session)
+	assert.Equal(t, first, wrapped)
+}
 
 func TestBuildAgentSessionsContentRendersSessionCards(t *testing.T) {
 	cfg := &config.AppConfig{WorktreeDir: t.TempDir()}
@@ -53,13 +199,20 @@ func TestBuildAgentSessionsContentRendersSessionCards(t *testing.T) {
 	plain := ansi.Strip(content)
 	for _, want := range []string{
 		"Notes tidy",
-		"WRITING",
-		"IDLE",
+		"|", // busy spinner frame for the writing session (ASCII icon set)
+		"*", // settled indicator for the idle session
 		"editing internal/app/app_agents.go",
 		"─",
 	} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("expected rendered content to contain %q, got %q", want, plain)
+		}
+	}
+
+	// The verbose activity badges were replaced by compact state glyphs.
+	for _, unwanted := range []string{"WRITING", "IDLE"} {
+		if strings.Contains(plain, unwanted) {
+			t.Fatalf("expected activity badge %q to be replaced by a glyph, got %q", unwanted, plain)
 		}
 	}
 
@@ -181,7 +334,7 @@ func TestRenderAgentSessionCardUsesGenericFallbackWithoutTaskOrDisplayName(t *te
 	}
 }
 
-func TestRenderAgentSessionCardShowsApprovalBadge(t *testing.T) {
+func TestRenderAgentSessionCardShowsApprovalIndicator(t *testing.T) {
 	cfg := &config.AppConfig{WorktreeDir: t.TempDir()}
 	m := NewModel(cfg, "")
 
@@ -196,8 +349,8 @@ func TestRenderAgentSessionCardShowsApprovalBadge(t *testing.T) {
 
 	lines := m.renderAgentSessionCard(session, 72, false)
 	plain := ansi.Strip(strings.Join(lines, "\n"))
-	if !strings.Contains(plain, "APPROVAL") {
-		t.Fatalf("expected approval badge, got %q", plain)
+	if !strings.Contains(plain, "!") {
+		t.Fatalf("expected approval indicator, got %q", plain)
 	}
 }
 

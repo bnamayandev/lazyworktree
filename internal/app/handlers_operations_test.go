@@ -16,7 +16,7 @@ import (
 	"github.com/chmouel/lazyworktree/internal/models"
 )
 
-func TestHandleEnterKeySelectsWorktree(t *testing.T) {
+func TestJumpKeySelectsWorktree(t *testing.T) {
 	cfg := &config.AppConfig{
 		WorktreeDir: t.TempDir(),
 	}
@@ -27,7 +27,10 @@ func TestHandleEnterKeySelectsWorktree(t *testing.T) {
 	}
 	m.state.data.selectedIndex = 0
 
-	_, cmd := m.handleEnterKey()
+	_, cmd, handled := m.handleOperationKey(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	if !handled {
+		t.Fatal("expected 'a' to be handled")
+	}
 	if m.selectedPath == "" {
 		t.Fatal("expected selected path to be set")
 	}
@@ -36,7 +39,7 @@ func TestHandleEnterKeySelectsWorktree(t *testing.T) {
 	}
 }
 
-func TestEnterAfterNavigationUsesHighlightedWorktree(t *testing.T) {
+func TestJumpAfterNavigationUsesHighlightedWorktree(t *testing.T) {
 	cfg := &config.AppConfig{
 		WorktreeDir: t.TempDir(),
 	}
@@ -62,7 +65,10 @@ func TestEnterAfterNavigationUsesHighlightedWorktree(t *testing.T) {
 		t.Fatalf("expected cursor to move to 1, got %d", m.state.ui.worktreeTable.Cursor())
 	}
 
-	_, cmd := m.handleEnterKey()
+	_, cmd, handled := m.handleOperationKey(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	if !handled {
+		t.Fatal("expected 'a' to be handled")
+	}
 	if m.selectedPath != secondPath {
 		t.Fatalf("expected selected path %q, got %q", secondPath, m.selectedPath)
 	}

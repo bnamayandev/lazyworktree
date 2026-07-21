@@ -63,6 +63,7 @@ git_pager_args:
 trust_mode: "tofu" # Options: "tofu" (default), "never", "always"
 merge_method: "rebase" # Options: "rebase" (default), "merge"
 session_prefix: "wt-" # Prefix for tmux/zellij session names (default: "wt-")
+agent_command: "claude" # Command launched when opening an agent (Enter) for a worktree; runs in a persistent tmux session and continues an existing chat
 # Branch name generation for issues and PRs
 issue_branch_name_template: "issue-{number}-{title}" # Placeholders: {number}, {title}, {generated}
 pr_branch_name_template: "pr-{number}-{title}" # Placeholders: {number}, {title}, {generated}, {pr_author}
@@ -213,6 +214,7 @@ CI environment variables: `LW_CI_JOB_NAME`, `LW_CI_JOB_NAME_CLEAN`, `LW_CI_RUN_I
 
 - `merge_method`: `"rebase"` (default) or `"merge"`. Controls Absorb and Sync (`S`) behaviour.
 - `session_prefix`: prefix for tmux/zellij sessions (default: `wt-`). Palette filters by this prefix.
+- `agent_command`: command launched when opening an agent (`Enter`) for a worktree (default: `claude`). The agent runs in a persistent tmux session named after the worktree, so it keeps working in the background once you close the viewer and `Enter` re-attaches to it. Under zellij the session is shown in a large floating pane. When the command is `claude`, LazyWorktree appends `--continue` if the worktree already has a conversation, so you resume rather than start afresh; an explicit `--continue`/`--resume` in your own command is respected as-is.
 
 ### Branch naming
 

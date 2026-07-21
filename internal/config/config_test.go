@@ -24,6 +24,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, "delta", cfg.GitPager)
 	assert.Equal(t, "tofu", cfg.TrustMode)
 	assert.Equal(t, "rebase", cfg.MergeMethod)
+	assert.Equal(t, "claude", cfg.AgentCommand)
 	assert.Equal(t, "nerd-font-v3", cfg.IconSet)
 	assert.Equal(t, "auto", cfg.AvatarBadges)
 	assert.Empty(t, cfg.WorktreeDir)
@@ -1514,6 +1515,43 @@ func TestParseConfigCIScriptPager(t *testing.T) {
 			cfg, err := parseConfig(tt.input)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, cfg.CIScriptPager)
+		})
+	}
+}
+
+func TestParseConfigAgentCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    map[string]interface{}
+		expected string
+	}{
+		{
+			name:     "custom value overrides default",
+			input:    map[string]interface{}{"agent_command": "codex"},
+			expected: "codex",
+		},
+		{
+			name:     "whitespace is trimmed",
+			input:    map[string]interface{}{"agent_command": "  claude --resume  "},
+			expected: "claude --resume",
+		},
+		{
+			name:     "empty string keeps default",
+			input:    map[string]interface{}{"agent_command": ""},
+			expected: "claude",
+		},
+		{
+			name:     "not set keeps default",
+			input:    map[string]interface{}{},
+			expected: "claude",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := parseConfig(tt.input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, cfg.AgentCommand)
 		})
 	}
 }

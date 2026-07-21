@@ -154,6 +154,7 @@ func (m *Model) registerPaletteActions(registry *commands.Registry) {
 		BrowseTags:        m.showBrowseWorktreeTags,
 		Absorb:            m.showAbsorbWorktree,
 		Prune:             m.showPruneMerged,
+		OpenAgent:         m.openAgentForSelectedWorktree,
 		CreateFromCurrent: m.showCreateFromCurrent,
 		CreateFromBranch: func() tea.Cmd {
 			defaultBase := m.state.services.git.GetMainBranch(m.ctx)

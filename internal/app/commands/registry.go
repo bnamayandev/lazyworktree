@@ -125,6 +125,7 @@ type WorktreeHandlers struct {
 	BrowseTags        func() tea.Cmd
 	Absorb            func() tea.Cmd
 	Prune             func() tea.Cmd
+	OpenAgent         func() tea.Cmd
 	CreateFromCurrent func() tea.Cmd
 	CreateFromBranch  func() tea.Cmd
 	CreateFromCommit  func() tea.Cmd
@@ -185,6 +186,7 @@ func RegisterWorktreeActions(r *Registry, h WorktreeHandlers) {
 		wtAction("worktree-browse-tags", "Browse by worktree tags", "Browse worktrees by existing tags and apply an exact tag filter", "", h.BrowseTags),
 		wtAction("worktree-absorb", "Absorb worktree", "Merge branch into main and remove worktree", "A", h.Absorb),
 		wtAction("worktree-prune", "Prune merged", "Remove merged PR worktrees", "X", h.Prune),
+		wtAction("worktree-open-agent", "Open agent session", "Launch the configured agent (e.g. claude) in a tmux session for the selected worktree", "Enter", h.OpenAgent),
 	)
 
 	r.Register(

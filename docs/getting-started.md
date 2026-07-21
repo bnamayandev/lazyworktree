@@ -1,7 +1,7 @@
 # Getting Started
 
 <div class="lw-callout">
-  <p><strong>Quick path:</strong> install lazyworktree, open a repository, run <code>lazyworktree</code>, then press <code>Enter</code> to jump to the selected worktree.</p>
+  <p><strong>Quick path:</strong> install lazyworktree, open a repository, run <code>lazyworktree</code>, then press <code>a</code> to jump to the selected worktree.</p>
 </div>
 
 ## First Run
@@ -15,7 +15,7 @@
 
 ## Jumping to Worktrees from Your Shell
 
-By default, pressing `Enter` outputs the selected worktree path. To jump directly:
+By default, pressing `a` outputs the selected worktree path on exit (`Enter` opens an agent session instead). To jump directly:
 
 ```bash
 cd "$(lazyworktree)"
