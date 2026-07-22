@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -305,90 +306,143 @@ func (m *Model) agentCommandForWorktree(wt *models.WorktreeInfo) string {
 	return resolveAgentCommand(m.agentCommand(), m.worktreeHasAgentSession(wt))
 }
 
-// agentTmuxSessionName is the persistent tmux session backing a worktree's
-// agent. Both the zellij and the plain-terminal paths converge on this name so
-// that Enter always re-attaches to the same running agent.
-func (m *Model) agentTmuxSessionName(wt *models.WorktreeInfo) string {
-	return sanitizeTmuxSessionName(m.config.SessionPrefix + filepath.Base(wt.Path))
-}
-
 // openAgentSession launches the configured agent command (default "claude") for
-// the worktree, backed by a persistent detached tmux session so the agent keeps
-// running in the background once the viewer goes away. Inside zellij the
-// session is shown in a large floating pane that overlays the TUI without
-// suspending it; otherwise tmux is attached in place.
+// the worktree. Inside zellij it goes into a floating pane, which leaves the
+// interface responsive whilst the agent works and lets the pane be hidden away
+// without stopping it. Elsewhere the agent runs inline, taking over the
+// terminal until it exits.
 func (m *Model) openAgentSession(wt *models.WorktreeInfo) tea.Cmd {
 	if wt == nil {
 		return nil
 	}
-	_, tmuxErr := exec.LookPath("tmux")
-	hasTmux := tmuxErr == nil
-
 	if os.Getenv("ZELLIJ") != "" || os.Getenv("ZELLIJ_SESSION_NAME") != "" {
-		return m.openAgentFloatingZellij(wt, hasTmux)
+		return m.openAgentFloatingZellij(wt)
 	}
-	if !hasTmux {
-		m.showInfo("Neither zellij nor tmux is available to open an agent session.", nil)
-		return nil
-	}
-	customCmd := &config.CustomCommand{
-		Description: filepath.Base(wt.Path),
-		Tmux: &config.TmuxCommand{
-			Attach: true,
-			// "switch" re-uses a running session (switch-client when already
-			// inside tmux, attach otherwise) so the agent survives between
-			// visits instead of being restarted.
-			OnExists: "switch",
-			Windows: []config.TmuxWindow{{
-				Name:    "agent",
-				Command: m.agentCommandForWorktree(wt),
-				Cwd:     wt.Path,
-			}},
-		},
-	}
-	return m.openTmuxSession(customCmd, wt)
+	return m.openAgentInline(wt)
 }
 
-// buildAgentPaneCommand returns the argv the floating zellij pane runs. When
-// tmux is available the agent is wrapped in a persistent "new-session -A"
-// so that closing the pane, or quitting zellij outright with Ctrl+Q, leaves the
-// agent running under the tmux server to be re-attached later. Without tmux the
-// agent runs directly in the pane, which cannot survive a zellij shutdown.
-func (m *Model) buildAgentPaneCommand(wt *models.WorktreeInfo, hasTmux bool) []string {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "bash"
+// agentShell resolves the shell the agent is launched under, so that the login
+// profile supplies the PATH the agent expects.
+func agentShell() string {
+	if shell := os.Getenv("SHELL"); shell != "" {
+		return shell
 	}
-	agentCmd := m.agentCommandForWorktree(wt)
-	if !hasTmux {
-		return []string{shell, "-lc", agentCmd}
+	return "bash"
+}
+
+// openAgentInline runs the agent in LazyWorktree's own terminal, suspending the
+// interface until the agent exits. This is the path outside zellij, where there
+// is no pane to put the agent in: nothing continues in the background and only
+// one agent can be open at a time. The conversation itself still survives,
+// because the transcript lives on disk and agentCommandForWorktree resumes it
+// on the next launch.
+func (m *Model) openAgentInline(wt *models.WorktreeInfo) tea.Cmd {
+	m.debugf("agent session: outside zellij, running %q inline in %s", m.agentCommand(), wt.Path)
+	env := m.buildCommandEnvForWorktree(wt)
+	// #nosec G204 -- the agent command comes from user configuration.
+	c := m.commandRunner(m.ctx, agentShell(), "-lc", m.agentCommandForWorktree(wt))
+	c.Dir = wt.Path
+	c.Env = services.AppendCommandEnv(os.Environ(), env)
+	return m.execProcess(c, func(err error) tea.Msg {
+		if err != nil {
+			return errMsg{err: err}
+		}
+		return refreshCompleteMsg{}
+	})
+}
+
+// buildAgentPaneCommand returns the argv the floating zellij pane runs: the
+// agent under a login shell, nothing more. The pane is the agent's home for as
+// long as it lives, so hiding the floating layer leaves it working whilst
+// closing the pane, or quitting zellij, stops it.
+func (m *Model) buildAgentPaneCommand(wt *models.WorktreeInfo) []string {
+	return []string{agentShell(), "-lc", m.agentCommandForWorktree(wt)}
+}
+
+// agentZellijPaneName titles a worktree's floating agent pane. Zellij keeps an
+// explicitly set name in place of the terminal title the running command
+// reports, so the name survives as a stable handle for finding the pane again
+// on a later Enter.
+func agentZellijPaneName(wt *models.WorktreeInfo) string {
+	return "agent:" + filepath.Base(wt.Path)
+}
+
+// zellijPaneListContains reports whether "zellij action list-panes" output holds
+// a pane with the given title. The columns are "PANE_ID  TYPE  TITLE" separated
+// by two spaces, and the title is taken as the whole remainder of the line so
+// that titles containing spaces still match. The leading header row is skipped,
+// lest a pane titled "TITLE" match it.
+func zellijPaneListContains(output, name string) bool {
+	for line := range strings.SplitSeq(output, "\n") {
+		parts := strings.SplitN(strings.TrimRight(line, "\r"), "  ", 3)
+		if len(parts) < 3 || parts[0] == "PANE_ID" {
+			continue
+		}
+		if strings.TrimSpace(parts[2]) == name {
+			return true
+		}
 	}
-	return []string{
-		"tmux", "new-session", "-A",
-		"-s", m.agentTmuxSessionName(wt),
-		"-c", wt.Path,
-		shell, "-lc", agentCmd,
+	return false
+}
+
+// zellijAgentPaneExists reports whether the worktree already has an agent pane
+// in the current zellij session, so that a second Enter reuses it instead of
+// stacking up duplicate panes onto the same agent.
+func (m *Model) zellijAgentPaneExists(name string) bool {
+	// #nosec G204 -- static command arguments.
+	cmd := m.commandRunner(m.ctx, "zellij", "action", "list-panes")
+	output, err := cmd.Output()
+	if err != nil {
+		m.debugf("agent pane: list-panes failed, assuming no existing pane: %v", err)
+		return false
+	}
+	return zellijPaneListContains(string(output), name)
+}
+
+// revealZellijFloatingPanes brings the floating layer back into view, which is
+// as close to raising the agent pane as zellij allows: it exposes no "focus pane
+// by id" action, so a pane that already exists can only be revealed, not
+// selected. Exit code 2 reports the panes were already visible, which is not a
+// failure.
+func (m *Model) revealZellijFloatingPanes() tea.Cmd {
+	return func() tea.Msg {
+		// #nosec G204 -- static command arguments.
+		c := m.commandRunner(m.ctx, "zellij", "action", "show-floating-panes")
+		if err := c.Run(); err != nil {
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+				return errMsg{err: fmt.Errorf("failed to reveal agent pane: %w", err)}
+			}
+		}
+		return nil
 	}
 }
 
 // openAgentFloatingZellij opens the agent in a large (90%) centred floating
-// zellij pane rooted at the worktree. The pane overlays the TUI without
-// suspending it; hide it with zellij's floating-pane toggle to send the agent
-// to the background while it keeps running.
-func (m *Model) openAgentFloatingZellij(wt *models.WorktreeInfo, hasTmux bool) tea.Cmd {
+// zellij pane rooted at the worktree. Creating the pane returns at once, so the
+// interface stays live whilst the agent works; hide the floating layer to send
+// the agent to the background and reveal it to come back. A worktree that
+// already has a pane reuses it, which matters rather more without a session
+// behind the pane: a second pane would be a second agent, not another view of
+// the first.
+func (m *Model) openAgentFloatingZellij(wt *models.WorktreeInfo) tea.Cmd {
 	if _, err := exec.LookPath("zellij"); err != nil {
 		m.showInfo("zellij is not installed. Install it from https://zellij.dev to open agent sessions.", nil)
 		return nil
 	}
+	name := agentZellijPaneName(wt)
+	if m.zellijAgentPaneExists(name) {
+		m.debugf("agent pane: reusing existing zellij pane %q", name)
+		return m.revealZellijFloatingPanes()
+	}
 	env := m.buildCommandEnvForWorktree(wt)
-	name := "agent:" + filepath.Base(wt.Path)
 	args := []string{
 		"action", "new-pane", "--floating",
 		"--width", "90%", "--height", "90%", "--x", "5%", "--y", "5%",
 		"--close-on-exit", "--name", name, "--cwd", wt.Path,
 		"--",
 	}
-	args = append(args, m.buildAgentPaneCommand(wt, hasTmux)...)
+	args = append(args, m.buildAgentPaneCommand(wt)...)
 	// #nosec G204 -- cwd is a managed worktree path; the agent command comes from user configuration.
 	c := m.commandRunner(m.ctx, "zellij", args...)
 	c.Dir = wt.Path

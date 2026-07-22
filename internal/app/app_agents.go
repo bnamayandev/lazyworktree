@@ -2,6 +2,7 @@ package app
 
 import (
 	"image/color"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -100,10 +101,12 @@ func (m *Model) markAgentSessionViewed(session *models.AgentSession) {
 	m.state.data.agentSessionSeenAt[key] = seenAt
 }
 
-// anyVisibleAgentBusy reports whether a currently rendered session is still
-// working. This gates the spinner tick loop so idle CPU stays at zero.
+// anyVisibleAgentBusy reports whether any known session is still working. This
+// gates the spinner tick loop so idle CPU stays at zero. It deliberately scans
+// every session rather than just the selected worktree's, because the worktree
+// list shows a state glyph per row and those must animate too.
 func (m *Model) anyVisibleAgentBusy() bool {
-	for _, session := range m.state.data.agentSessions {
+	for _, session := range m.state.data.agentSessionsSnapshot {
 		if session != nil && agentBusy(session.Activity) {
 			return true
 		}
@@ -118,10 +121,12 @@ func (m *Model) agentSpinnerTick() tea.Cmd {
 	})
 }
 
-// advanceAgentSpinner steps the animation and repaints the pane from the
-// snapshot already in hand, avoiding a session-service query per frame.
+// advanceAgentSpinner steps the animation and repaints from the snapshot
+// already in hand, avoiding a session-service query per frame. Both the
+// worktree list and the sessions pane carry the indicator, so both are redrawn.
 func (m *Model) advanceAgentSpinner() {
 	m.state.ui.agentSpinnerFrame++
+	m.updateTable()
 	if len(m.state.data.agentSessions) == 0 {
 		return
 	}
@@ -408,6 +413,11 @@ func (m *Model) renderAgentSessionRight(session *models.AgentSession) string {
 
 // agentBusy reports whether the agent is actively working on the previous
 // request, covering reasoning, context compaction and every tool activity.
+//
+// Approval counts as busy rather than as a prompt for you. The transcript only
+// records that a delegated tool call has no result yet, which is equally true
+// while that tool is simply still running, so it cannot be read as "the agent
+// needs you".
 func agentBusy(activity models.AgentActivity) bool {
 	switch activity {
 	case models.AgentActivityThinking,
@@ -417,7 +427,8 @@ func agentBusy(activity models.AgentActivity) bool {
 		models.AgentActivityRunning,
 		models.AgentActivitySearching,
 		models.AgentActivityBrowsing,
-		models.AgentActivitySpawning:
+		models.AgentActivitySpawning,
+		models.AgentActivityApproval:
 		return true
 	default:
 		return false
@@ -446,11 +457,14 @@ func (m *Model) agentStateGlyph(icon, ascii string) string {
 // session:
 //
 //	spinner  the agent is still working on the last request
-//	?        waiting on your input or a clarification
-//	‼        waiting on a tool approval
 //	● green  finished a request you have not looked at yet
 //	● grey   the change has been viewed
 //	·        idle with nothing outstanding
+//
+// There is deliberately no "waiting on your input" glyph. Claude records the
+// end of a turn as an assistant message with no tool call, which is identical
+// whether it asked you a question or simply finished the job, so the state
+// cannot be told apart from "done" and is reported as done.
 func (m *Model) renderAgentSessionStateIndicator(session *models.AgentSession) string {
 	if session == nil {
 		return ""
@@ -459,22 +473,72 @@ func (m *Model) renderAgentSessionStateIndicator(session *models.AgentSession) s
 	return lipgloss.NewStyle().Foreground(fg).Bold(true).Render(glyph)
 }
 
-// agentSessionStatus maps a session onto its status glyph and theme colour.
+// agentSessionState maps a session onto its state glyph and theme colour.
 func (m *Model) agentSessionState(session *models.AgentSession) (string, color.Color) {
 	switch {
 	case agentBusy(session.Activity):
 		frames := m.agentSpinnerFrames()
 		return frames[m.state.ui.agentSpinnerFrame%len(frames)], m.theme.Accent
-	case session.Activity == models.AgentActivityWaiting:
-		return m.agentStateGlyph("?", "?"), m.theme.WarnFg
-	case session.Activity == models.AgentActivityApproval:
-		return m.agentStateGlyph("‼", "!"), m.theme.WarnFg
 	case m.agentSessionUnviewed(session):
 		return m.agentStateGlyph("●", "*"), m.theme.SuccessFg
 	case session.LastActivity.IsZero():
 		return m.agentStateGlyph("·", "."), m.theme.MutedFg
 	default:
 		return m.agentStateGlyph("●", "*"), m.theme.MutedFg
+	}
+}
+
+// renderWorktreeAgentState renders the state glyph for a worktree row, or an
+// empty cell when the worktree has no agent session behind it.
+func (m *Model) renderWorktreeAgentState(wt *models.WorktreeInfo) string {
+	glyph, fg, ok := m.worktreeAgentState(wt)
+	if !ok {
+		return ""
+	}
+	return lipgloss.NewStyle().Foreground(fg).Bold(true).Render(glyph)
+}
+
+// worktreeAgentState collapses every session attached to a worktree into the
+// single glyph shown in the worktree list. Busy outranks unviewed, which
+// outranks settled, so a row never understates what its agent is up to. The
+// bool reports whether the worktree has any session at all, letting rows
+// without one stay blank instead of carrying a placeholder.
+func (m *Model) worktreeAgentState(wt *models.WorktreeInfo) (string, color.Color, bool) {
+	if wt == nil || !m.agentSessionsEnabled() {
+		return "", nil, false
+	}
+	base := filepath.Clean(strings.TrimSpace(wt.Path))
+	if base == "" || base == "." {
+		return "", nil, false
+	}
+
+	found := false
+	unviewed := false
+	for _, session := range m.state.data.agentSessionsSnapshot {
+		if session == nil {
+			continue
+		}
+		cwd := filepath.Clean(strings.TrimSpace(session.CWD))
+		if cwd == "" || (cwd != base && !strings.HasPrefix(cwd, base+string(filepath.Separator))) {
+			continue
+		}
+		found = true
+		if agentBusy(session.Activity) {
+			frames := m.agentSpinnerFrames()
+			return frames[m.state.ui.agentSpinnerFrame%len(frames)], m.theme.Accent, true
+		}
+		if m.agentSessionUnviewed(session) {
+			unviewed = true
+		}
+	}
+
+	switch {
+	case !found:
+		return "", nil, false
+	case unviewed:
+		return m.agentStateGlyph("●", "*"), m.theme.SuccessFg, true
+	default:
+		return m.agentStateGlyph("●", "*"), m.theme.MutedFg, true
 	}
 }
 

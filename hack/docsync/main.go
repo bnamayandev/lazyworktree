@@ -450,7 +450,7 @@ func parseConfigKeys(path string) ([]configKeySpec, error) {
 		"pr_branch_name_template":      "Template for PR-based branch naming.",
 		"merge_method":                 "Absorb strategy for integrating a worktree.",
 		"session_prefix":               "Prefix for tmux/zellij session names.",
-		"agent_command":                "Command launched when opening an agent (`Enter`) for a worktree. Runs in a persistent tmux session so it continues in the background; a `claude` command continues the worktree's existing conversation when there is one.",
+		"agent_command":                "Command launched when opening an agent (`Enter`) for a worktree. Runs in a floating zellij pane, or in place when outside zellij; a `claude` command continues the worktree's existing conversation when there is one.",
 		"palette_mru":                  "Enable MRU sorting in command palette.",
 		"palette_mru_limit":            "Maximum MRU items in command palette.",
 		"layout":                       "Pane layout strategy.",

@@ -8,7 +8,7 @@ The TUI is organised into six panes:
 
 | Pane | Key | Content |
 | --- | --- | --- |
-| Worktree List | `1` | All Git worktrees with branch, note markers, and status indicators |
+| Worktree List | `1` | All Git worktrees with branch, note markers, status indicators, and an agent state column when a session is running |
 | Status / CI | `2` | PR/MR info, CI check results, divergence status, and notes preview |
 | Git Status | `3` | Changed files in the selected worktree (collapsible tree view) |
 | Commit Log | `4` | Commit history for the selected branch |
@@ -53,23 +53,25 @@ Press `=` to toggle zoom for the focused pane, expanding it to fill the entire s
 Agent Sessions is the final pane in the Tab cycle when visible, even though it is rendered above Notes.
 By default the pane shows only sessions with a live Claude/pi process match; press `A` in the pane to include offline history, and press `6` to reveal historical matches when nothing is currently open.
 
-Each session carries a state indicator. This is distinct from the worktree list's Status column, which reports working-tree and ahead/behind counts:
+Each session carries a state indicator:
 
 | State | Meaning |
 | --- | --- |
-| Animated spinner (accent) | The agent is still working on your last request — reasoning, compacting, reading, writing, running a command, searching, browsing or delegating |
-| `?` (amber) | The agent is waiting on your input or a clarification |
-| `‼` (amber) | The agent is waiting on a tool approval |
+| Animated spinner (accent) | The agent is still working on your last request — reasoning, compacting, reading, writing, running a command, searching, browsing, delegating, or holding a tool call that has yet to return |
 | `●` (green) | The agent finished a request you have not looked at yet |
 | `●` (grey) | The change has been viewed, or nothing is outstanding |
 
-Selecting a session in the focused pane marks it as viewed, which settles a green indicator back to grey. Indicators fall back to `|`, `?`, `!` and `*` when icons are disabled.
+Selecting a session in the focused pane marks it as viewed, which settles a green indicator back to grey. Indicators fall back to `|` and `*` when icons are disabled.
+
+There is deliberately no "waiting on your input" state. A transcript records the end of a turn identically whether the agent asked you a question or simply finished the job, so the two cannot be told apart and both report as finished.
+
+The worktree list carries the same indicator in its own **State** column, which summarises every session in that worktree: busy outranks an unviewed completion, which outranks a settled one. The column appears once a session exists and stays hidden otherwise, and is distinct from the neighbouring **Status** column, which reports working-tree and ahead/behind counts.
 
 ## Pane-Specific Actions
 
 ### Worktree Pane
 
-- `Enter` — open an agent session (`agent_command`, default `claude`) rooted at the selected worktree, continuing the worktree's existing conversation when there is one and starting a fresh one otherwise. The agent runs in a persistent tmux session, so it keeps working in the background once you close the viewer; pressing `Enter` again re-attaches. Under zellij it is shown in a large floating pane that overlays the interface without suspending it
+- `Enter` — open an agent session (`agent_command`, default `claude`) rooted at the selected worktree, continuing the worktree's existing conversation when there is one and starting a fresh one otherwise. Under zellij the agent is placed in a large floating pane that overlays the interface without suspending it, so the worktree list keeps refreshing whilst the agent works: hide the floating layer to send it to the background and press `Enter` again to reveal it. A worktree that already has a pane reveals it rather than starting a second agent alongside the first. The agent lives as long as its pane, so closing the pane or quitting zellij stops it, though the conversation is resumed on the next `Enter`. Outside zellij the agent runs in place, suspending the interface until it exits
 - `a` — jump to the selected worktree (exits LazyWorktree and outputs the path for the shell integration)
 - `s` — cycle sort mode: Path, Last Active (commit date), Last Switched (access time)
 - `e` — edit worktree metadata for the selected worktree (description, colour, notes, icon, tags)

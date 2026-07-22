@@ -1,8 +1,8 @@
 package app
 
 import (
+	"context"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,19 +12,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// forceTmuxAgentPath makes openAgentSession take the tmux fallback branch by
+// forceInlineAgentPath makes openAgentSession take the inline branch by
 // clearing the zellij environment markers for the duration of the test.
-func forceTmuxAgentPath(t *testing.T) {
+func forceInlineAgentPath(t *testing.T) {
 	t.Helper()
 	t.Setenv("ZELLIJ", "")
 	t.Setenv("ZELLIJ_SESSION_NAME", "")
 }
 
-func TestOpenAgentSessionRunsConfiguredCommandInTmux(t *testing.T) {
-	forceTmuxAgentPath(t)
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not installed")
-	}
+func TestOpenAgentSessionRunsConfiguredCommandInline(t *testing.T) {
+	forceInlineAgentPath(t)
+	t.Setenv("SHELL", "/bin/zsh")
 
 	cfg := &config.AppConfig{
 		WorktreeDir:  t.TempDir(),
@@ -39,29 +37,17 @@ func TestOpenAgentSessionRunsConfiguredCommandInTmux(t *testing.T) {
 	m.execProcess = capture.exec
 
 	cmd := m.openAgentForSelectedWorktree()
-	if cmd == nil {
-		t.Fatal("expected command to be returned")
-	}
+	require.NotNil(t, cmd)
 
-	if capture.name != testBashCmd {
-		t.Fatalf("expected bash command, got %q", capture.name)
-	}
-	if len(capture.args) != 2 || capture.args[0] != "-lc" {
-		t.Fatalf("expected bash -lc args, got %v", capture.args)
-	}
-	if !strings.Contains(capture.args[1], "my-agent --flag") {
-		t.Fatalf("expected tmux script to run the configured agent command, got %q", capture.args[1])
-	}
-	if capture.dir != testWorktreePath {
-		t.Fatalf("expected worktree dir, got %q", capture.dir)
-	}
+	assert.Equal(t, "/bin/zsh", capture.name)
+	assert.Equal(t, []string{"-lc", "my-agent --flag"}, capture.args)
+	assert.Equal(t, testWorktreePath, capture.dir)
+	// Nothing may reach tmux any more; the agent is the pane's own process.
+	assert.NotContains(t, strings.Join(capture.args, " "), "tmux")
 }
 
 func TestOpenAgentSessionDefaultsToClaude(t *testing.T) {
-	forceTmuxAgentPath(t)
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not installed")
-	}
+	forceInlineAgentPath(t)
 
 	cfg := &config.AppConfig{WorktreeDir: t.TempDir()} // AgentCommand unset
 	m := NewModel(cfg, "")
@@ -71,19 +57,12 @@ func TestOpenAgentSessionDefaultsToClaude(t *testing.T) {
 	m.execProcess = capture.exec
 
 	cmd := m.openAgentSession(&models.WorktreeInfo{Path: testWorktreePath, Branch: "feat"})
-	if cmd == nil {
-		t.Fatal("expected command to be returned")
-	}
-	if !strings.Contains(capture.args[1], "claude") {
-		t.Fatalf("expected tmux script to default to claude, got %q", capture.args[1])
-	}
+	require.NotNil(t, cmd)
+	assert.Equal(t, "claude", capture.args[1])
 }
 
 func TestHandleEnterKeyOpensAgentOnWorktreePane(t *testing.T) {
-	forceTmuxAgentPath(t)
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not installed")
-	}
+	forceInlineAgentPath(t)
 
 	cfg := &config.AppConfig{WorktreeDir: t.TempDir(), AgentCommand: "my-agent"}
 	m := NewModel(cfg, "")
@@ -96,15 +75,9 @@ func TestHandleEnterKeyOpensAgentOnWorktreePane(t *testing.T) {
 	m.execProcess = capture.exec
 
 	_, cmd := m.handleEnterKey()
-	if cmd == nil {
-		t.Fatal("expected Enter to return an agent command")
-	}
-	if m.selectedPath != "" {
-		t.Fatalf("Enter must not set the shell-integration path, got %q", m.selectedPath)
-	}
-	if !strings.Contains(capture.args[1], "my-agent") {
-		t.Fatalf("expected tmux script to run the configured agent command, got %q", capture.args[1])
-	}
+	require.NotNil(t, cmd, "expected Enter to return an agent command")
+	assert.Empty(t, m.selectedPath, "Enter must not set the shell-integration path")
+	assert.Equal(t, "my-agent", capture.args[1])
 }
 
 func TestOpenAgentSessionUsesFloatingZellijPaneWhenInsideZellij(t *testing.T) {
@@ -117,7 +90,14 @@ func TestOpenAgentSessionUsesFloatingZellijPaneWhenInsideZellij(t *testing.T) {
 	m := NewModel(cfg, "")
 
 	capture := &commandCapture{}
-	m.commandRunner = capture.runner
+	// Keep the pane lookup off the real zellij server and report no existing
+	// panes, so this exercises the creation path rather than the reuse path.
+	m.commandRunner = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if len(args) > 1 && args[1] == "list-panes" {
+			return exec.Command("printf", "%s", "PANE_ID  TYPE  TITLE\n")
+		}
+		return capture.runner(ctx, name, args...)
+	}
 	m.execProcess = capture.exec
 
 	cmd := m.openAgentSession(&models.WorktreeInfo{Path: testWorktreePath, Branch: "feat"})
@@ -133,6 +113,67 @@ func TestOpenAgentSessionUsesFloatingZellijPaneWhenInsideZellij(t *testing.T) {
 			t.Fatalf("expected zellij args to contain %q, got %q", want, joined)
 		}
 	}
+}
+
+func TestZellijPaneListContains(t *testing.T) {
+	// Real "zellij action list-panes" output: two-space separated columns, and
+	// unnamed panes carry whatever terminal title the running command reports.
+	const paneList = `PANE_ID  TYPE  TITLE
+plugin_0  plugin  (.) - zellij:link
+terminal_1  terminal  ✳ Reviewing the agent branch
+terminal_11  terminal  Pane #2
+terminal_13  terminal  agent:feature-one
+`
+
+	tests := []struct {
+		name     string
+		output   string
+		pane     string
+		expected bool
+	}{
+		{name: "finds a named agent pane", output: paneList, pane: "agent:feature-one", expected: true},
+		{name: "ignores a worktree without a pane", output: paneList, pane: "agent:feature-two", expected: false},
+		{name: "does not match the header", output: paneList, pane: "TITLE", expected: false},
+		{name: "tolerates empty output", output: "", pane: "agent:feature-one", expected: false},
+		{name: "matches titles containing spaces", output: paneList, pane: "Pane #2", expected: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, zellijPaneListContains(tt.output, tt.pane))
+		})
+	}
+}
+
+func TestOpenAgentSessionReusesExistingZellijPane(t *testing.T) {
+	if _, err := exec.LookPath("zellij"); err != nil {
+		t.Skip("zellij not installed")
+	}
+	t.Setenv("ZELLIJ", "0") // inside zellij
+
+	cfg := &config.AppConfig{WorktreeDir: t.TempDir(), AgentCommand: "my-agent"}
+	m := NewModel(cfg, "")
+
+	var calls [][]string
+	m.commandRunner = func(_ context.Context, name string, args ...string) *exec.Cmd {
+		calls = append(calls, append([]string{name}, args...))
+		if len(args) > 1 && args[1] == "list-panes" {
+			// #nosec G204 -- test mock data, not user input
+			return exec.Command("printf", "%s", "PANE_ID  TYPE  TITLE\nterminal_13  terminal  agent:wt\n")
+		}
+		return exec.Command("true")
+	}
+
+	cmd := m.openAgentSession(&models.WorktreeInfo{Path: testWorktreePath, Branch: "feat"})
+	require.NotNil(t, cmd)
+	cmd()
+
+	require.Len(t, calls, 2, "expected a list-panes lookup followed by one action")
+	assert.Equal(t, []string{"zellij", "action", "list-panes"}, calls[0])
+	// Reuse must reveal the existing pane, never open a second one onto the
+	// same agent.
+	assert.Equal(t, []string{"zellij", "action", "show-floating-panes"}, calls[1])
+	assert.NotContains(t, strings.Join(calls[1], " "), "new-pane")
 }
 
 func TestOpenAgentForSelectedWorktreeNoSelection(t *testing.T) {
@@ -269,47 +310,59 @@ func TestHasResumableClaudeSession(t *testing.T) {
 	}
 }
 
-func TestBuildAgentPaneCommandWrapsInPersistentTmux(t *testing.T) {
-	cfg := &config.AppConfig{
-		WorktreeDir:   t.TempDir(),
-		AgentCommand:  "my-agent",
-		SessionPrefix: "wt-",
+func TestBuildAgentPaneCommandRunsAgentDirectly(t *testing.T) {
+	tests := []struct {
+		name      string
+		shell     string
+		wantShell string
+	}{
+		{name: "uses the login shell", shell: "/bin/zsh", wantShell: "/bin/zsh"},
+		{name: "falls back to bash when SHELL is unset", shell: "", wantShell: testBashCmd},
 	}
-	m := NewModel(cfg, "")
-	wt := &models.WorktreeInfo{Path: testWorktreePath, Branch: "feat"}
 
-	t.Run("tmux backs the pane so the agent outlives it", func(t *testing.T) {
-		argv := m.buildAgentPaneCommand(wt, true)
-		require.GreaterOrEqual(t, len(argv), 7)
-		assert.Equal(t, "tmux", argv[0])
-		assert.Equal(t, "new-session", argv[1])
-		// -A attaches to the running session instead of starting a second one.
-		assert.Equal(t, "-A", argv[2])
-		assert.Equal(t, "-s", argv[3])
-		assert.Equal(t, "wt-"+filepath.Base(testWorktreePath), argv[4])
-		assert.Equal(t, "-c", argv[5])
-		assert.Equal(t, testWorktreePath, argv[6])
-		assert.Contains(t, strings.Join(argv, " "), "my-agent")
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SHELL", tt.shell)
+			cfg := &config.AppConfig{WorktreeDir: t.TempDir(), AgentCommand: "my-agent"}
+			m := NewModel(cfg, "")
 
-	t.Run("falls back to running the agent directly without tmux", func(t *testing.T) {
-		argv := m.buildAgentPaneCommand(wt, false)
-		assert.NotContains(t, argv, "tmux")
-		assert.Equal(t, "my-agent", argv[len(argv)-1])
-		assert.Equal(t, "-lc", argv[len(argv)-2])
-	})
+			argv := m.buildAgentPaneCommand(&models.WorktreeInfo{Path: testWorktreePath, Branch: "feat"})
+
+			// The agent is the pane's own process, with no multiplexer between
+			// them: the pane is what keeps it alive.
+			assert.Equal(t, []string{tt.wantShell, "-lc", "my-agent"}, argv)
+		})
+	}
 }
 
-func TestAgentTmuxSessionNameIsStablePerWorktree(t *testing.T) {
-	cfg := &config.AppConfig{WorktreeDir: t.TempDir(), SessionPrefix: "wt-"}
-	m := NewModel(cfg, "")
+func TestOpenAgentSessionRunsInlineOutsideZellij(t *testing.T) {
+	tests := []struct {
+		name      string
+		shell     string
+		wantShell string
+	}{
+		{name: "uses the login shell", shell: "/bin/zsh", wantShell: "/bin/zsh"},
+		{name: "falls back to bash when SHELL is unset", shell: "", wantShell: testBashCmd},
+	}
 
-	// A deterministic, per-worktree name is what makes Enter re-attach to the
-	// running agent rather than spawn a second one.
-	assert.Equal(t, "wt-"+filepath.Base(testWorktreePath),
-		m.agentTmuxSessionName(&models.WorktreeInfo{Path: testWorktreePath, Branch: "feat"}))
-	assert.NotEqual(t,
-		m.agentTmuxSessionName(&models.WorktreeInfo{Path: testWorktreePath, Branch: "feat"}),
-		m.agentTmuxSessionName(&models.WorktreeInfo{Path: "/tmp/other-wt", Branch: "feat"}),
-		"distinct worktrees must not share an agent session")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			forceInlineAgentPath(t)
+			t.Setenv("SHELL", tt.shell)
+
+			cfg := &config.AppConfig{WorktreeDir: t.TempDir(), AgentCommand: "my-agent --flag"}
+			m := NewModel(cfg, "")
+
+			capture := &commandCapture{}
+			m.commandRunner = capture.runner
+			m.execProcess = capture.exec
+
+			cmd := m.openAgentSession(&models.WorktreeInfo{Path: testWorktreePath, Branch: "feat"})
+			require.NotNil(t, cmd, "a bare terminal must still open an agent")
+			assert.Equal(t, tt.wantShell, capture.name)
+			assert.Equal(t, []string{"-lc", "my-agent --flag"}, capture.args)
+			assert.Equal(t, testWorktreePath, capture.dir)
+			assert.False(t, m.state.ui.screenManager.IsActive(), "must not raise an info screen")
+		})
+	}
 }

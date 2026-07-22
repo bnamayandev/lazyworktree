@@ -42,7 +42,7 @@ This page is generated from `internal/config/config.go`. Run `make docs-sync` af
 | `worktree_note_script` | `string` | `none` | Script to prefill worktree notes from issue/PR context. |
 | `worktree_notes_path` | `string` | `none` | Optional shared JSON file path for notes storage. |
 | `session_prefix` | `string` | `wt-` | Prefix for tmux/zellij session names. |
-| `agent_command` | `string` | `claude` | Command launched when opening an agent (`Enter`) for a worktree. Runs in a persistent tmux session so it continues in the background; a `claude` command continues the worktree's existing conversation when there is one. |
+| `agent_command` | `string` | `claude` | Command launched when opening an agent (`Enter`) for a worktree. Runs in a floating zellij pane, or in place when outside zellij; a `claude` command continues the worktree's existing conversation when there is one. |
 | `palette_mru` | `bool` | `true` | Enable MRU sorting in command palette. |
 | `palette_mru_limit` | `int` | `5` | Maximum MRU items in command palette. |
 | `init_commands` | `[]string` | `none` | Global commands run after worktree creation. |

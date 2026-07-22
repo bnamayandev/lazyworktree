@@ -11,6 +11,7 @@ import (
 	"github.com/chmouel/lazyworktree/internal/config"
 	"github.com/chmouel/lazyworktree/internal/models"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAgentSessionStateIndicatorGlyphs(t *testing.T) {
@@ -29,8 +30,12 @@ func TestAgentSessionStateIndicatorGlyphs(t *testing.T) {
 		{"running spins", models.AgentActivityRunning, "⠋", m.theme.Accent},
 		{"searching spins", models.AgentActivitySearching, "⠋", m.theme.Accent},
 		{"spawning spins", models.AgentActivitySpawning, "⠋", m.theme.Accent},
-		{"waiting on input asks", models.AgentActivityWaiting, "?", m.theme.WarnFg},
-		{"waiting on approval warns", models.AgentActivityApproval, "‼", m.theme.WarnFg},
+		// A pending delegated tool call is indistinguishable from one that is
+		// merely still running, so it counts as busy rather than as a prompt.
+		{"pending approval spins", models.AgentActivityApproval, "⠋", m.theme.Accent},
+		// Claude ends every turn with a plain assistant message, whether it
+		// asked a question or finished the job, so "waiting" reads as settled.
+		{"waiting is treated as settled", models.AgentActivityWaiting, "●", m.theme.MutedFg},
 		{"settled session is grey", models.AgentActivityIdle, "●", m.theme.MutedFg},
 	}
 
@@ -58,8 +63,8 @@ func TestAgentSessionStateIndicatorFallsBackToASCII(t *testing.T) {
 		glyph    string
 	}{
 		{"busy", models.AgentActivityThinking, "|"},
-		{"waiting", models.AgentActivityWaiting, "?"},
-		{"approval", models.AgentActivityApproval, "!"},
+		{"pending approval is busy", models.AgentActivityApproval, "|"},
+		{"waiting is settled", models.AgentActivityWaiting, "*"},
 		{"settled", models.AgentActivityIdle, "*"},
 	}
 
@@ -120,21 +125,118 @@ func TestObserveAgentSessionsKeepsExistingBaseline(t *testing.T) {
 	assert.False(t, m.agentSessionUnviewed(advanced))
 }
 
+func TestWorktreeAgentStateAggregatesSessions(t *testing.T) {
+	cfg := &config.AppConfig{WorktreeDir: t.TempDir(), IconSet: "nerd-font-v3"}
+	m := NewModel(cfg, "")
+
+	root := filepath.Join(cfg.WorktreeDir, "feature")
+	wt := &models.WorktreeInfo{Path: root, Branch: "feature"}
+	busyFrame := m.agentSpinnerFrames()[0]
+	seeded := time.Now().Add(-time.Hour)
+
+	tests := []struct {
+		name     string
+		sessions []*models.AgentSession
+		glyph    string
+		colour   color.Color
+		ok       bool
+	}{
+		{
+			name: "no sessions leaves the cell empty",
+			ok:   false,
+		},
+		{
+			name:     "a session elsewhere does not claim the row",
+			sessions: []*models.AgentSession{{ID: "other", CWD: filepath.Join(cfg.WorktreeDir, "unrelated")}},
+			ok:       false,
+		},
+		{
+			name:     "a settled session is grey",
+			sessions: []*models.AgentSession{{ID: "s", CWD: root, Activity: models.AgentActivityIdle, LastActivity: seeded}},
+			glyph:    "●",
+			colour:   m.theme.MutedFg,
+			ok:       true,
+		},
+		{
+			name:     "a session in a subdirectory still counts",
+			sessions: []*models.AgentSession{{ID: "s", CWD: filepath.Join(root, "internal"), Activity: models.AgentActivityIdle, LastActivity: seeded}},
+			glyph:    "●",
+			colour:   m.theme.MutedFg,
+			ok:       true,
+		},
+		{
+			name: "an unviewed completion turns green",
+			sessions: []*models.AgentSession{
+				{ID: "s", CWD: root, Activity: models.AgentActivityIdle, LastActivity: time.Now()},
+			},
+			glyph:  "●",
+			colour: m.theme.SuccessFg,
+			ok:     true,
+		},
+		{
+			name: "busy outranks an unviewed sibling",
+			sessions: []*models.AgentSession{
+				{ID: "s", CWD: root, Activity: models.AgentActivityIdle, LastActivity: time.Now()},
+				{ID: "t", CWD: root, Activity: models.AgentActivityRunning, LastActivity: time.Now()},
+			},
+			glyph:  busyFrame,
+			colour: m.theme.Accent,
+			ok:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m.state.data.agentSessionSeenAt = map[string]time.Time{"s": seeded, "t": seeded}
+			m.state.ui.agentSpinnerFrame = 0
+			m.state.data.agentSessionsSnapshot = tt.sessions
+
+			glyph, colour, ok := m.worktreeAgentState(wt)
+			require.Equal(t, tt.ok, ok)
+			if !tt.ok {
+				assert.Empty(t, glyph)
+				return
+			}
+			assert.Equal(t, tt.glyph, glyph)
+			assert.Equal(t, tt.colour, colour)
+		})
+	}
+}
+
+func TestWorktreeAgentStateRespectsDisabledSessions(t *testing.T) {
+	cfg := &config.AppConfig{WorktreeDir: t.TempDir(), AgentSessionsDisabled: true}
+	m := NewModel(cfg, "")
+
+	root := filepath.Join(cfg.WorktreeDir, "feature")
+	m.state.data.agentSessionsSnapshot = []*models.AgentSession{
+		{ID: "s", CWD: root, Activity: models.AgentActivityRunning, LastActivity: time.Now()},
+	}
+
+	_, _, ok := m.worktreeAgentState(&models.WorktreeInfo{Path: root})
+	assert.False(t, ok, "the indicator must stay hidden when agent sessions are disabled")
+}
+
 func TestAnyVisibleAgentBusyGatesSpinnerLoop(t *testing.T) {
 	cfg := &config.AppConfig{WorktreeDir: t.TempDir()}
 	m := NewModel(cfg, "")
 
 	assert.False(t, m.anyVisibleAgentBusy(), "no sessions means no tick loop")
 
-	m.state.data.agentSessions = []*models.AgentSession{
+	// The loop is gated on the full snapshot, not the selected worktree's
+	// sessions, because every worktree row carries an animated indicator.
+	m.state.data.agentSessionsSnapshot = []*models.AgentSession{
 		{ID: "a", Activity: models.AgentActivityIdle},
 		{ID: "b", Activity: models.AgentActivityWaiting},
 	}
 	assert.False(t, m.anyVisibleAgentBusy(), "settled sessions must not spin the loop")
 
-	m.state.data.agentSessions = append(m.state.data.agentSessions,
+	m.state.data.agentSessionsSnapshot = append(m.state.data.agentSessionsSnapshot,
 		&models.AgentSession{ID: "c", Activity: models.AgentActivityRunning})
 	assert.True(t, m.anyVisibleAgentBusy(), "a working session should start the loop")
+
+	// An unselected worktree's agent still has to drive the animation.
+	m.state.data.agentSessions = nil
+	assert.True(t, m.anyVisibleAgentBusy(), "a busy agent off-screen should still tick")
 }
 
 func TestAdvanceAgentSpinnerCyclesFrames(t *testing.T) {
@@ -334,7 +436,9 @@ func TestRenderAgentSessionCardUsesGenericFallbackWithoutTaskOrDisplayName(t *te
 	}
 }
 
-func TestRenderAgentSessionCardShowsApprovalIndicator(t *testing.T) {
+// A pending approval is reported as busy: the transcript cannot distinguish a
+// tool call awaiting your say-so from one that is simply still running.
+func TestRenderAgentSessionCardShowsPendingApprovalAsBusy(t *testing.T) {
 	cfg := &config.AppConfig{WorktreeDir: t.TempDir()}
 	m := NewModel(cfg, "")
 
@@ -349,8 +453,9 @@ func TestRenderAgentSessionCardShowsApprovalIndicator(t *testing.T) {
 
 	lines := m.renderAgentSessionCard(session, 72, false)
 	plain := ansi.Strip(strings.Join(lines, "\n"))
-	if !strings.Contains(plain, "!") {
-		t.Fatalf("expected approval indicator, got %q", plain)
+	busy := m.agentSpinnerFrames()[0]
+	if !strings.Contains(plain, busy) {
+		t.Fatalf("expected busy indicator %q, got %q", busy, plain)
 	}
 }
 

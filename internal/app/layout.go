@@ -654,6 +654,21 @@ func (m *Model) applyLayout(layout layoutDims) {
 	m.state.ui.filterInput.SetWidth(max(20, layout.width-18))
 }
 
+// worktreeAgentColumnTitle names the agent state column. Row construction
+// matches on it so rows and columns can never disagree about its presence.
+const worktreeAgentColumnTitle = "State"
+
+// worktreeTableShowsAgentState reports whether the worktree table currently
+// carries the agent state column.
+func (m *Model) worktreeTableShowsAgentState() bool {
+	for _, column := range m.state.ui.worktreeTable.Columns() {
+		if column.Title == worktreeAgentColumnTitle {
+			return true
+		}
+	}
+	return false
+}
+
 // updateTableColumns updates the worktree table column widths based on available space.
 func (m *Model) updateTableColumns(totalWidth int) {
 	status := 10
@@ -666,16 +681,28 @@ func (m *Model) updateTableColumns(totalWidth int) {
 		pr = 12
 	}
 
+	// The agent state column holds a single glyph, so it never needs to flex.
+	// It only earns its width once a session exists, so anyone not running
+	// agents keeps the full name column.
+	showAgentColumn := m.agentSessionsEnabled() && len(m.state.data.agentSessionsSnapshot) > 0
+	agent := 0
+	if showAgentColumn {
+		agent = 2
+	}
+
 	// The table library handles separators internally (3 spaces per separator)
 	// So we need to account for them: (numColumns - 1) * 3
 	numColumns := 3
 	if showPRColumn {
-		numColumns = 4
+		numColumns++
+	}
+	if showAgentColumn {
+		numColumns++
 	}
 	separatorSpace := (numColumns - 1) * 3
 
-	worktree := max(12, totalWidth-status-last-pr-separatorSpace)
-	excess := worktree + status + pr + last + separatorSpace - totalWidth
+	worktree := max(12, totalWidth-status-last-pr-agent-separatorSpace)
+	excess := worktree + status + pr + agent + last + separatorSpace - totalWidth
 	for excess > 0 && last > 10 {
 		last--
 		excess--
@@ -699,7 +726,7 @@ func (m *Model) updateTableColumns(totalWidth int) {
 	}
 
 	// Final adjustment: ensure column widths + separators sum exactly to totalWidth
-	actualTotal := worktree + status + last + pr + separatorSpace
+	actualTotal := worktree + status + last + pr + agent + separatorSpace
 	if actualTotal < totalWidth {
 		// Distribute remaining space to the worktree column
 		worktree += (totalWidth - actualTotal)
@@ -710,9 +737,17 @@ func (m *Model) updateTableColumns(totalWidth int) {
 
 	columns := []table.Column{
 		{Title: "Name", Width: worktree},
-		{Title: "Status", Width: status},
-		{Title: "Last Active", Width: last},
 	}
+
+	if showAgentColumn {
+		columns = append(columns, table.Column{Title: worktreeAgentColumnTitle, Width: agent})
+	}
+
+	columns = append(
+		columns,
+		table.Column{Title: "Status", Width: status},
+		table.Column{Title: "Last Active", Width: last},
+	)
 
 	if showPRColumn {
 		columns = append(columns, table.Column{Title: m.changeRequestColumnTitle(), Width: pr})

@@ -759,6 +759,10 @@ func (m *Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.observeAgentSessions(msg.sessions)
 			m.state.data.agentSessionsSnapshot = msg.sessions
 			m.refreshSelectedWorktreeAgentSessionsPane()
+			// The state column appears with the first session, so the columns
+			// must be resized before the rows that fill them are rebuilt.
+			m.updateTableColumns(m.state.ui.worktreeTable.Width())
+			m.updateTable()
 		}
 		return m, nil
 

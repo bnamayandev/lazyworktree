@@ -21,7 +21,7 @@
 
 | Key | Action |
 | --- | --- |
-| `Enter` | Open an agent session (runs `agent_command`, default `claude`) rooted at the selected worktree, continuing an existing conversation when there is one. Runs in a persistent tmux session that keeps working in the background; shown in a floating pane under zellij |
+| `Enter` | Open an agent session (runs `agent_command`, default `claude`) rooted at the selected worktree, continuing an existing conversation when there is one. Under zellij it opens in a floating pane and the interface stays live; a second `Enter` reveals that pane rather than starting a second agent. Elsewhere it runs in place until it exits |
 | `a` | Jump to worktree (exit and `cd` via shell integration) |
 | `j`, `k` | Move selection up/down in lists and menus |
 | `c` | Create new worktree (from branch, commit, PR/MR, or issue) |

@@ -179,6 +179,7 @@ func (m *Model) updateTable() {
 
 	// Update table rows
 	showIcons := m.config.IconsEnabled()
+	showAgentColumn := m.worktreeTableShowsAgentState()
 	rows := make([]table.Row, 0, len(m.state.data.filteredWts))
 	for idx, wt := range m.state.data.filteredWts {
 		name := filepath.Base(wt.Path)
@@ -228,11 +229,14 @@ func (m *Model) updateTable() {
 		}
 		statusStr := combinedStatusIndicator(wt.Dirty, wt.HasUpstream, wt.Ahead, wt.Behind, wt.Unpushed, showIcons)
 
-		row := table.Row{
-			name,
-			statusStr,
-			wt.LastActive,
+		row := table.Row{name}
+		// Read the live column set rather than re-deriving it from config: the
+		// two are updated by different code paths, and a row that disagrees
+		// with its columns panics inside the table's renderer.
+		if showAgentColumn {
+			row = append(row, m.renderWorktreeAgentState(wt))
 		}
+		row = append(row, statusStr, wt.LastActive)
 
 		// Only include PR column if PR data has been loaded and PR is not disabled
 		if m.loading.prDataLoaded && !m.config.DisablePR {

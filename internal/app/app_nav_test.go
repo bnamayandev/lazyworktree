@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
@@ -12,6 +13,8 @@ import (
 	"github.com/chmouel/lazyworktree/internal/config"
 	"github.com/chmouel/lazyworktree/internal/models"
 	"github.com/chmouel/lazyworktree/internal/theme"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const testNavFilterQuery = "test"
@@ -94,6 +97,49 @@ func TestUpdateTablePRColumnKeepsCompactStateIndicator(t *testing.T) {
 	if rows[1][3] != "-" {
 		t.Fatalf("expected no-PR row to keep placeholder, got %q", rows[1][3])
 	}
+}
+
+// The worktree rows must always carry exactly one cell per configured column:
+// the table's renderer indexes rows by column position and panics otherwise.
+func TestUpdateTableAgentStateColumnMatchesRowWidth(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.WorktreeDir = t.TempDir()
+	cfg.IconSet = "text"
+	m := NewModel(cfg, "")
+	busyPath := filepath.Join(cfg.WorktreeDir, "busy-worktree")
+	m.state.data.worktrees = []*models.WorktreeInfo{
+		{Path: busyPath, Branch: "feature/busy"},
+		{Path: filepath.Join(cfg.WorktreeDir, "quiet-worktree"), Branch: "feature/quiet"},
+	}
+
+	// Without any session the column stays away and the name keeps its width.
+	m.updateTableColumns(120)
+	m.updateTable()
+	require.Len(t, m.state.ui.worktreeTable.Columns(), 3)
+	for _, row := range m.state.ui.worktreeTable.Rows() {
+		assert.Len(t, row, 3, "rows must match the column count")
+	}
+
+	// The first session brings the column in for every row.
+	m.state.data.agentSessionsSnapshot = []*models.AgentSession{
+		{ID: "s", CWD: busyPath, Activity: models.AgentActivityRunning, LastActivity: time.Now()},
+	}
+	m.updateTableColumns(120)
+	m.updateTable()
+
+	columns := m.state.ui.worktreeTable.Columns()
+	require.Len(t, columns, 4)
+	assert.Equal(t, worktreeAgentColumnTitle, columns[1].Title)
+
+	rows := m.state.ui.worktreeTable.Rows()
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		require.Len(t, row, 4, "rows must match the column count")
+	}
+	assert.Equal(t, m.agentSpinnerFrames()[0], stripTerminalSequences(rows[0][1]),
+		"the worktree running an agent should show the busy indicator")
+	assert.Empty(t, stripTerminalSequences(rows[1][1]),
+		"a worktree without a session should keep an empty state cell")
 }
 
 func TestWorkspaceNameTruncation(t *testing.T) {
