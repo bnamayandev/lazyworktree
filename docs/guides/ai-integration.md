@@ -94,22 +94,6 @@ lazyworktree worktrees context my-feature --json | jq '.agent_sessions[] | selec
 | `"registry"` | Recovered from the persistent registry after a parse failure |
 | `"none"` | No liveness signal found |
 
-### Agent session state indicators
-
-The worktree list and the agent sessions pane share one glyph per session:
-
-| Glyph | Fallback | Meaning |
-|---|---|---|
-| `?` | `?` | Blocked on you: the agent asked a question and cannot proceed |
-| spinner | `\|` | Working on the last request |
-| `●` green | `*` | Finished a request you have not looked at yet |
-| `●` grey | `*` | Finished and already viewed |
-| `·` | `.` | Idle with nothing outstanding |
-
-The fallback column applies when icons are disabled.
-
-`?` is raised only for tool calls that block on a person: an unresolved `AskUserQuestion` or `ExitPlanMode`. A turn that merely ended still reads as finished, because an assistant message carrying no tool call looks identical whether the agent asked something in prose or completed the job.
-
 ### Detecting a LazyWorktree agent session
 
 Agents opened with `Enter` run with `LW_AGENT_SESSION=1` exported. Tooling inside the session can use it to tell a LazyWorktree pane apart from an ordinary terminal — a Claude Code `Stop` or `Notification` hook, for instance, can announce a pane working away in the background differently from the session in front of you.

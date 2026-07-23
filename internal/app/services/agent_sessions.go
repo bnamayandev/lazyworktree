@@ -544,12 +544,9 @@ func parseClaudeSession(path, encodedDir string) (*models.AgentSession, error) {
 		if command := extractCommandText(pending.Block.Input); command != "" {
 			session.LastCommand = command
 		}
-		switch {
-		case agentToolAwaitsUser(pending.Block.Name):
-			session.Status = models.AgentSessionStatusWaitingForUser
-		case pending.FromAgentProgress:
+		if pending.FromAgentProgress {
 			session.Status = models.AgentSessionStatusWaitingApproval
-		default:
+		} else {
 			session.Status = models.AgentSessionStatusExecutingTool
 		}
 		session.Activity = resolveAgentActivity(
@@ -621,21 +618,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// agentToolAwaitsUser reports whether a tool call is itself the prompt, meaning
-// the agent cannot proceed until you answer it.
-//
-// An unresolved call to one of these is unambiguous, which a bare unresolved
-// tool call is not: an ordinary tool with no result yet is equally likely to
-// still be running. These block on a person and nothing else.
-func agentToolAwaitsUser(toolName string) bool {
-	switch strings.TrimSpace(toolName) {
-	case "AskUserQuestion", "ExitPlanMode":
-		return true
-	default:
-		return false
-	}
-}
-
 func applyAgentStatus(session *models.AgentSession, role string, hasToolUse bool, toolName string, isToolResult bool) {
 	if session == nil {
 		return
@@ -647,9 +629,6 @@ func applyAgentStatus(session *models.AgentSession, role string, hasToolUse bool
 		if hasToolUse {
 			status = models.AgentSessionStatusExecutingTool
 			session.CurrentTool = toolName
-			if agentToolAwaitsUser(toolName) {
-				status = models.AgentSessionStatusWaitingForUser
-			}
 		}
 	case "user":
 		if isToolResult {
@@ -1051,11 +1030,6 @@ func resolveAgentActivity(lastSummaryAt, lastToolAt time.Time, lastToolName, cur
 		return models.AgentActivityCompacting
 	}
 	if !lastToolAt.IsZero() && now.Sub(lastToolAt) < agentActivityTimeout {
-		// A question is a tool call too, so the recent-tool shortcut must not
-		// paint it as work in progress.
-		if status == models.AgentSessionStatusWaitingForUser {
-			return models.AgentActivityWaiting
-		}
 		if status == models.AgentSessionStatusWaitingApproval {
 			return models.AgentActivityApproval
 		}
