@@ -70,11 +70,11 @@ func TestKeyboardNavigation(t *testing.T) {
 	m = updated.(*Model)
 
 	// Quit
-	updated, _ = m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	m = updated.(*Model)
 
 	if !m.quitting {
-		t.Error("Model should be marked as quitting after 'q' key")
+		t.Error("Model should be marked as quitting after Ctrl+C")
 	}
 }
 

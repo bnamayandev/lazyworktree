@@ -37,7 +37,6 @@ const (
 	keyCtrlK  = "ctrl+k"
 	keyDown   = "down"
 	keyUp     = "up"
-	keyQ      = "q"
 	keyTab    = "tab"
 
 	errBranchEmpty           = "Branch name cannot be empty."

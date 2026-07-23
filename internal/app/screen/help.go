@@ -63,7 +63,7 @@ func NewHelpScreen(maxWidth, maxHeight int, customCommands config.CustomCommands
 - L: Toggle layout (default / top)
 - Enter: Open an agent session (runs agent_command, default claude) rooted at the selected worktree, continuing an existing conversation when there is one. Under zellij it opens in a floating pane and the interface stays live; a second Enter reveals that pane rather than starting a second agent. Elsewhere it runs in place until it exits
 - a: Jump to selected worktree (exit and cd)
-- q: Quit application
+- Ctrl+C: Quit application
 
 **{{HELP_STATUS_PANE}}Info Pane (when focused)**
 - j / k: Scroll info content

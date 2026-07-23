@@ -81,14 +81,14 @@ func (m *Model) renderFooter(layout layoutDims) string {
 		groups = [][]string{
 			{m.renderKeyHint("j/k", "Scroll"), m.renderKeyHint("i", "Edit Note")},
 			{m.renderKeyHint("Tab", "Switch Pane")},
-			{m.renderKeyHint("q", "Quit"), m.renderKeyHint("?", "Help")},
+			{m.renderKeyHint("Ctrl+C", "Quit"), m.renderKeyHint("?", "Help")},
 		}
 
 	case paneAgentSessions:
 		groups = [][]string{
 			{m.renderKeyHint("j/k", "Navigate"), m.renderKeyHint("Ctrl+D/U", "Page"), m.renderKeyHint("A", "Show All")},
 			{m.renderKeyHint("Tab", "Switch Pane"), m.renderKeyHint("6", "Focus Pane")},
-			{m.renderKeyHint("q", "Quit"), m.renderKeyHint("?", "Help")},
+			{m.renderKeyHint("Ctrl+C", "Quit"), m.renderKeyHint("?", "Help")},
 		}
 
 	case paneCommit: // Commit pane
@@ -96,12 +96,12 @@ func (m *Model) renderFooter(layout layoutDims) string {
 			groups = [][]string{
 				{m.renderKeyHint("Enter", "View Commit"), m.renderKeyHint("C", "Cherry-pick"), m.renderKeyHint("j/k", "Navigate")},
 				{m.renderKeyHint("f", "Filter"), m.renderKeyHint("/", "Search"), m.renderKeyHint("r", "Refresh")},
-				{m.renderKeyHint("Tab", "Switch Pane"), m.renderKeyHint("q", "Quit"), m.renderKeyHint("?", "Help")},
+				{m.renderKeyHint("Tab", "Switch Pane"), m.renderKeyHint("Ctrl+C", "Quit"), m.renderKeyHint("?", "Help")},
 			}
 		} else {
 			groups = [][]string{
 				{m.renderKeyHint("f", "Filter"), m.renderKeyHint("/", "Search")},
-				{m.renderKeyHint("Tab", "Switch Pane"), m.renderKeyHint("q", "Quit"), m.renderKeyHint("?", "Help")},
+				{m.renderKeyHint("Tab", "Switch Pane"), m.renderKeyHint("Ctrl+C", "Quit"), m.renderKeyHint("?", "Help")},
 			}
 		}
 
@@ -118,14 +118,14 @@ func (m *Model) renderFooter(layout layoutDims) string {
 		groups = [][]string{
 			actionGroup,
 			{m.renderKeyHint("f", "Filter"), m.renderKeyHint("/", "Search"), m.renderKeyHint("r", "Refresh")},
-			{m.renderKeyHint("Tab", "Switch Pane"), m.renderKeyHint("q", "Quit"), m.renderKeyHint("?", "Help")},
+			{m.renderKeyHint("Tab", "Switch Pane"), m.renderKeyHint("Ctrl+C", "Quit"), m.renderKeyHint("?", "Help")},
 		}
 
 	case paneInfo: // Info pane (info + CI)
 		groups = [][]string{
 			{m.renderKeyHint("j/k", "Scroll"), m.renderKeyHint("n/p", "CI Checks"), m.renderKeyHint("Enter", "Open URL"), m.renderKeyHint("Ctrl+v", "CI Logs")},
 			{m.renderKeyHint("Tab", "Switch Pane"), m.renderKeyHint("r", "Refresh")},
-			{m.renderKeyHint("q", "Quit"), m.renderKeyHint("?", "Help")},
+			{m.renderKeyHint("Ctrl+C", "Quit"), m.renderKeyHint("?", "Help")},
 		}
 
 	default: // Worktree table (pane 0)
@@ -153,7 +153,7 @@ func (m *Model) renderFooter(layout layoutDims) string {
 		actionGroup = append(actionGroup, m.renderKeyHint("a", "Jump"))
 		actionGroup = append(actionGroup, m.customFooterHints()...)
 		globalGroup := []string{
-			m.renderKeyHint("q", "Quit"),
+			m.renderKeyHint("Ctrl+C", "Quit"),
 			m.renderKeyHint("?", "Help"),
 			m.renderKeyHint("ctrl+p", "Palette"),
 		}

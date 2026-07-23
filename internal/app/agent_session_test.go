@@ -40,7 +40,7 @@ func TestOpenAgentSessionRunsConfiguredCommandInline(t *testing.T) {
 	require.NotNil(t, cmd)
 
 	assert.Equal(t, "/bin/zsh", capture.name)
-	assert.Equal(t, []string{"-lc", "my-agent --flag"}, capture.args)
+	assert.Equal(t, []string{"-lc", "export LW_AGENT_SESSION=1; my-agent --flag"}, capture.args)
 	assert.Equal(t, testWorktreePath, capture.dir)
 	// Nothing may reach tmux any more; the agent is the pane's own process.
 	assert.NotContains(t, strings.Join(capture.args, " "), "tmux")
@@ -58,7 +58,7 @@ func TestOpenAgentSessionDefaultsToClaude(t *testing.T) {
 
 	cmd := m.openAgentSession(&models.WorktreeInfo{Path: testWorktreePath, Branch: "feat"})
 	require.NotNil(t, cmd)
-	assert.Equal(t, "claude", capture.args[1])
+	assert.Equal(t, "export LW_AGENT_SESSION=1; claude", capture.args[1])
 }
 
 func TestHandleEnterKeyOpensAgentOnWorktreePane(t *testing.T) {
@@ -77,7 +77,7 @@ func TestHandleEnterKeyOpensAgentOnWorktreePane(t *testing.T) {
 	_, cmd := m.handleEnterKey()
 	require.NotNil(t, cmd, "expected Enter to return an agent command")
 	assert.Empty(t, m.selectedPath, "Enter must not set the shell-integration path")
-	assert.Equal(t, "my-agent", capture.args[1])
+	assert.Equal(t, "export LW_AGENT_SESSION=1; my-agent", capture.args[1])
 }
 
 func TestOpenAgentSessionUsesFloatingZellijPaneWhenInsideZellij(t *testing.T) {
@@ -329,8 +329,9 @@ func TestBuildAgentPaneCommandRunsAgentDirectly(t *testing.T) {
 			argv := m.buildAgentPaneCommand(&models.WorktreeInfo{Path: testWorktreePath, Branch: "feat"})
 
 			// The agent is the pane's own process, with no multiplexer between
-			// them: the pane is what keeps it alive.
-			assert.Equal(t, []string{tt.wantShell, "-lc", "my-agent"}, argv)
+			// them: the pane is what keeps it alive. The marker rides in the
+			// command string so it survives zellij spawning the pane server-side.
+			assert.Equal(t, []string{tt.wantShell, "-lc", "export LW_AGENT_SESSION=1; my-agent"}, argv)
 		})
 	}
 }
@@ -360,7 +361,7 @@ func TestOpenAgentSessionRunsInlineOutsideZellij(t *testing.T) {
 			cmd := m.openAgentSession(&models.WorktreeInfo{Path: testWorktreePath, Branch: "feat"})
 			require.NotNil(t, cmd, "a bare terminal must still open an agent")
 			assert.Equal(t, tt.wantShell, capture.name)
-			assert.Equal(t, []string{"-lc", "my-agent --flag"}, capture.args)
+			assert.Equal(t, []string{"-lc", "export LW_AGENT_SESSION=1; my-agent --flag"}, capture.args)
 			assert.Equal(t, testWorktreePath, capture.dir)
 			assert.False(t, m.state.ui.screenManager.IsActive(), "must not raise an info screen")
 		})

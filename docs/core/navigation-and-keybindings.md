@@ -39,7 +39,7 @@ Press `=` to toggle zoom for the focused pane, expanding it to fill the entire s
 | `[` | Previous pane |
 | `h`, `l` | Shrink / Grow worktree pane |
 | `Home`, `End` | Jump to first/last item |
-| `q` | Quit |
+| `Ctrl+C` | Quit |
 | `?` | Help |
 
 ## Pane Focus and Layout

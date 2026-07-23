@@ -321,6 +321,17 @@ func (m *Model) openAgentSession(wt *models.WorktreeInfo) tea.Cmd {
 	return m.openAgentInline(wt)
 }
 
+// agentSessionMarker stamps the shell the agent runs under, so that tooling
+// inside the session can tell a LazyWorktree-launched agent apart from an
+// ordinary terminal: a Claude Code hook, for instance, can announce a pane
+// working away in the background differently from the session you are sat in
+// front of.
+//
+// It is exported inside the command string rather than set on the launching
+// process because the zellij pane is spawned by the zellij server, which does
+// not inherit the client's environment.
+const agentSessionMarker = "export LW_AGENT_SESSION=1; "
+
 // agentShell resolves the shell the agent is launched under, so that the login
 // profile supplies the PATH the agent expects.
 func agentShell() string {
@@ -340,7 +351,7 @@ func (m *Model) openAgentInline(wt *models.WorktreeInfo) tea.Cmd {
 	m.debugf("agent session: outside zellij, running %q inline in %s", m.agentCommand(), wt.Path)
 	env := m.buildCommandEnvForWorktree(wt)
 	// #nosec G204 -- the agent command comes from user configuration.
-	c := m.commandRunner(m.ctx, agentShell(), "-lc", m.agentCommandForWorktree(wt))
+	c := m.commandRunner(m.ctx, agentShell(), "-lc", agentSessionMarker+m.agentCommandForWorktree(wt))
 	c.Dir = wt.Path
 	c.Env = services.AppendCommandEnv(os.Environ(), env)
 	return m.execProcess(c, func(err error) tea.Msg {
@@ -356,7 +367,7 @@ func (m *Model) openAgentInline(wt *models.WorktreeInfo) tea.Cmd {
 // long as it lives, so hiding the floating layer leaves it working whilst
 // closing the pane, or quitting zellij, stops it.
 func (m *Model) buildAgentPaneCommand(wt *models.WorktreeInfo) []string {
-	return []string{agentShell(), "-lc", m.agentCommandForWorktree(wt)}
+	return []string{agentShell(), "-lc", agentSessionMarker + m.agentCommandForWorktree(wt)}
 }
 
 // agentZellijPaneName titles a worktree's floating agent pane. Zellij keeps an

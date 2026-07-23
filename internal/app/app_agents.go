@@ -456,15 +456,17 @@ func (m *Model) agentStateGlyph(icon, ascii string) string {
 // renderAgentSessionStateIndicator renders the compact state glyph for a
 // session:
 //
+//	?        blocked on you: the agent asked a question and cannot proceed
 //	spinner  the agent is still working on the last request
 //	● green  finished a request you have not looked at yet
 //	● grey   the change has been viewed
 //	·        idle with nothing outstanding
 //
-// There is deliberately no "waiting on your input" glyph. Claude records the
-// end of a turn as an assistant message with no tool call, which is identical
-// whether it asked you a question or simply finished the job, so the state
-// cannot be told apart from "done" and is reported as done.
+// The "?" covers a question the agent asked outright, which the transcript
+// records as an unresolved AskUserQuestion or ExitPlanMode call. A bare end of
+// turn still reads as done: an assistant message with no tool call looks the
+// same whether the agent asked something in prose or simply finished, so only
+// the tools that block on a person are treated as a prompt for you.
 func (m *Model) renderAgentSessionStateIndicator(session *models.AgentSession) string {
 	if session == nil {
 		return ""
@@ -476,6 +478,8 @@ func (m *Model) renderAgentSessionStateIndicator(session *models.AgentSession) s
 // agentSessionState maps a session onto its state glyph and theme colour.
 func (m *Model) agentSessionState(session *models.AgentSession) (string, color.Color) {
 	switch {
+	case session.Activity == models.AgentActivityWaiting:
+		return m.agentStateGlyph("?", "?"), m.theme.WarnFg
 	case agentBusy(session.Activity):
 		frames := m.agentSpinnerFrames()
 		return frames[m.state.ui.agentSpinnerFrame%len(frames)], m.theme.Accent
@@ -523,6 +527,11 @@ func (m *Model) worktreeAgentState(wt *models.WorktreeInfo) (string, color.Color
 			continue
 		}
 		found = true
+		// A worktree blocked on you outranks one merely working: it is the row
+		// you need to act on.
+		if session.Activity == models.AgentActivityWaiting {
+			return m.agentStateGlyph("?", "?"), m.theme.WarnFg, true
+		}
 		if agentBusy(session.Activity) {
 			frames := m.agentSpinnerFrames()
 			return frames[m.state.ui.agentSpinnerFrame%len(frames)], m.theme.Accent, true

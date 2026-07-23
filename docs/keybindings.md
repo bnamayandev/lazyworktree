@@ -49,7 +49,7 @@
 | `Home` | Go to first item in focused pane |
 | `End` | Go to last item in focused pane |
 | `?` | Show help |
-| `q` | Quit |
+| `Ctrl+C` | Quit |
 | `y` | Copy context-aware value to clipboard (path/file/SHA via OSC52) |
 | `Y` | Copy selected worktree branch name to clipboard |
 

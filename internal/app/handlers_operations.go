@@ -41,7 +41,7 @@ func (m *Model) handleBuiltInKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) handleQuitKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	switch msg.String() {
-	case keyCtrlC, keyQ:
+	case keyCtrlC:
 		if m.selectedPath != "" {
 			m.stopGitWatcher()
 			m.stopAgentWatcher()

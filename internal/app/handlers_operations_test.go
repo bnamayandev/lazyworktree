@@ -16,6 +16,42 @@ import (
 	"github.com/chmouel/lazyworktree/internal/models"
 )
 
+func TestQuitKeyOnlyRespondsToCtrlC(t *testing.T) {
+	tests := []struct {
+		name        string
+		key         tea.KeyPressMsg
+		wantHandled bool
+	}{
+		{
+			name:        "ctrl+c quits",
+			key:         tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl},
+			wantHandled: true,
+		},
+		{
+			name:        "q no longer quits",
+			key:         tea.KeyPressMsg{Code: 'q', Text: "q"},
+			wantHandled: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewModel(&config.AppConfig{WorktreeDir: t.TempDir()}, "")
+
+			_, cmd, handled := m.handleQuitKey(tt.key)
+			if handled != tt.wantHandled {
+				t.Fatalf("handleQuitKey handled = %v, want %v", handled, tt.wantHandled)
+			}
+			if handled != (cmd != nil) {
+				t.Fatalf("expected a quit command only when handled, got cmd != nil = %v", cmd != nil)
+			}
+			if m.quitting != tt.wantHandled {
+				t.Fatalf("quitting = %v, want %v", m.quitting, tt.wantHandled)
+			}
+		})
+	}
+}
+
 func TestJumpKeySelectsWorktree(t *testing.T) {
 	cfg := &config.AppConfig{
 		WorktreeDir: t.TempDir(),

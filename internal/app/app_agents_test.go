@@ -33,9 +33,9 @@ func TestAgentSessionStateIndicatorGlyphs(t *testing.T) {
 		// A pending delegated tool call is indistinguishable from one that is
 		// merely still running, so it counts as busy rather than as a prompt.
 		{"pending approval spins", models.AgentActivityApproval, "⠋", m.theme.Accent},
-		// Claude ends every turn with a plain assistant message, whether it
-		// asked a question or finished the job, so "waiting" reads as settled.
-		{"waiting is treated as settled", models.AgentActivityWaiting, "●", m.theme.MutedFg},
+		// An unresolved AskUserQuestion or ExitPlanMode blocks on a person and
+		// nothing else, so it is called out rather than folded into "done".
+		{"waiting asks for you", models.AgentActivityWaiting, "?", m.theme.WarnFg},
 		{"settled session is grey", models.AgentActivityIdle, "●", m.theme.MutedFg},
 	}
 
@@ -64,7 +64,7 @@ func TestAgentSessionStateIndicatorFallsBackToASCII(t *testing.T) {
 	}{
 		{"busy", models.AgentActivityThinking, "|"},
 		{"pending approval is busy", models.AgentActivityApproval, "|"},
-		{"waiting is settled", models.AgentActivityWaiting, "*"},
+		{"waiting asks for you", models.AgentActivityWaiting, "?"},
 		{"settled", models.AgentActivityIdle, "*"},
 	}
 
