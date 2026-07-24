@@ -31,6 +31,25 @@ func (m *Model) determineCurrentWorktree() *models.WorktreeInfo {
 	return nil
 }
 
+// selectInitialWorktreeFromCwd highlights the worktree matching the process's
+// launch directory. Called once on startup so the window title and info pane
+// reflect where the user actually launched from, instead of leaving the
+// cursor on row 0 of whatever the default sort produced.
+func (m *Model) selectInitialWorktreeFromCwd() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	for i, wt := range m.state.data.filteredWts {
+		if utils.PathContains(wt.Path, cwd) {
+			m.state.ui.worktreeTable.SetCursor(i)
+			m.state.data.selectedIndex = i
+			m.updateWorktreeArrows()
+			return
+		}
+	}
+}
+
 // selectedWorktree returns the currently selected worktree from the filtered list.
 func (m *Model) selectedWorktree() *models.WorktreeInfo {
 	indices := []int{m.state.ui.worktreeTable.Cursor(), m.state.data.selectedIndex}

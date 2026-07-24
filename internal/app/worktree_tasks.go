@@ -163,10 +163,7 @@ func taskboardWorktreeName(wt *models.WorktreeInfo) string {
 	if wt == nil {
 		return ""
 	}
-	if wt.IsMain {
-		return mainWorktreeName
-	}
-	return filepath.Base(wt.Path)
+	return worktreeDisplayName(wt)
 }
 
 func extractTaskRefs(worktreePath, noteText string) []worktreeTaskRef {

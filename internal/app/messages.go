@@ -107,7 +107,10 @@ func (m *Model) handleWorktreesLoaded(msg worktreesLoadedMsg) (tea.Model, tea.Cm
 			}
 		}
 		m.pendingOp.selectPath = ""
+	} else if !m.initialCwdSelectionDone {
+		m.selectInitialWorktreeFromCwd()
 	}
+	m.initialCwdSelectionDone = true
 	m.saveCache()
 	if len(m.state.data.worktrees) == 0 {
 		cwd, _ := os.Getwd()

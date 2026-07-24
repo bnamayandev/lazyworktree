@@ -277,6 +277,99 @@ func TestHandleWorktreesLoadedWithPendingSelection(t *testing.T) {
 	}
 }
 
+func TestHandleWorktreesLoadedSelectsCwdMatchOnFirstLoad(t *testing.T) {
+	cfg := &config.AppConfig{WorktreeDir: t.TempDir()}
+	m := NewModel(cfg, "")
+
+	parent := normalizePathForTest(t, t.TempDir())
+	mainPath := filepath.Join(parent, "main")
+	featurePath := filepath.Join(parent, "feature")
+	requireDir(t, mainPath)
+	requireDir(t, featurePath)
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(featurePath); err != nil {
+		t.Fatalf("failed to change working directory: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+	})
+
+	// main sorts before feature (sortModePath, no access history), matching the
+	// real-world case where the launched-into worktree isn't row 0.
+	wts := []*models.WorktreeInfo{
+		{Path: mainPath, Branch: "main", IsMain: true},
+		{Path: featurePath, Branch: testFeat},
+	}
+	m.sortMode = sortModePath
+
+	msg := worktreesLoadedMsg{worktrees: wts, err: nil}
+	updated, _ := m.handleWorktreesLoaded(msg)
+	updatedModel := updated.(*Model)
+
+	if !updatedModel.initialCwdSelectionDone {
+		t.Error("expected initialCwdSelectionDone to be true after first load")
+	}
+	if updatedModel.state.data.selectedIndex < 0 || updatedModel.state.data.selectedIndex >= len(updatedModel.state.data.filteredWts) {
+		t.Fatalf("selectedIndex out of range: %d", updatedModel.state.data.selectedIndex)
+	}
+	got := updatedModel.state.data.filteredWts[updatedModel.state.data.selectedIndex]
+	if got.Path != featurePath {
+		t.Fatalf("expected selection to match cwd worktree %q, got %q", featurePath, got.Path)
+	}
+
+	// A subsequent load must not fight manual navigation: move the cursor away
+	// from the cwd match and reload; it should stay where the user put it.
+	updatedModel.state.ui.worktreeTable.SetCursor(0)
+	updatedModel.state.data.selectedIndex = 0
+	msg2 := worktreesLoadedMsg{worktrees: wts, err: nil}
+	updated2, _ := updatedModel.handleWorktreesLoaded(msg2)
+	updatedModel2 := updated2.(*Model)
+	if updatedModel2.state.data.selectedIndex != 0 {
+		t.Fatalf("expected manual selection to be preserved on reload, got selectedIndex %d", updatedModel2.state.data.selectedIndex)
+	}
+}
+
+func TestHandleWorktreesLoadedPendingSelectionWinsOverCwd(t *testing.T) {
+	cfg := &config.AppConfig{WorktreeDir: t.TempDir()}
+	m := NewModel(cfg, "")
+
+	parent := normalizePathForTest(t, t.TempDir())
+	mainPath := filepath.Join(parent, "main")
+	featurePath := filepath.Join(parent, "feature")
+	requireDir(t, mainPath)
+	requireDir(t, featurePath)
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(featurePath); err != nil {
+		t.Fatalf("failed to change working directory: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+	})
+
+	m.pendingOp.selectPath = mainPath
+	wts := []*models.WorktreeInfo{
+		{Path: mainPath, Branch: "main", IsMain: true},
+		{Path: featurePath, Branch: testFeat},
+	}
+
+	msg := worktreesLoadedMsg{worktrees: wts, err: nil}
+	updated, _ := m.handleWorktreesLoaded(msg)
+	updatedModel := updated.(*Model)
+
+	got := updatedModel.state.data.filteredWts[updatedModel.state.data.selectedIndex]
+	if got.Path != mainPath {
+		t.Fatalf("expected pending selection to win over cwd match, got %q", got.Path)
+	}
+}
+
 func TestHandleCachedWorktreesLoaded(t *testing.T) {
 	cfg := &config.AppConfig{WorktreeDir: t.TempDir()}
 	m := NewModel(cfg, "")

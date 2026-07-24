@@ -1,8 +1,6 @@
 package app
 
 import (
-	"path/filepath"
-
 	tea "charm.land/bubbletea/v2"
 	"github.com/chmouel/lazyworktree/internal/models"
 )
@@ -137,10 +135,7 @@ func (m *Model) setFilterToWorktree(wt *models.WorktreeInfo) {
 	if wt == nil {
 		return
 	}
-	name := filepath.Base(wt.Path)
-	if wt.IsMain {
-		name = mainWorktreeName
-	}
+	name := worktreeDisplayName(wt)
 	m.state.ui.filterInput.SetValue(name)
 	m.state.ui.filterInput.CursorEnd()
 	m.state.services.filter.FilterQuery = name

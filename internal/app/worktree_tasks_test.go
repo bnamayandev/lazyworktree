@@ -10,6 +10,17 @@ import (
 	"github.com/chmouel/lazyworktree/internal/models"
 )
 
+func TestTaskboardWorktreeName(t *testing.T) {
+	if got := taskboardWorktreeName(nil); got != "" {
+		t.Fatalf("expected empty name for nil worktree, got %q", got)
+	}
+
+	wt := &models.WorktreeInfo{Path: "/repo", Branch: "feat/agent-integration", IsMain: true}
+	if got := taskboardWorktreeName(wt); got != "feat/agent-integration" {
+		t.Fatalf("expected taskboard label to reflect checked-out branch, got %q", got)
+	}
+}
+
 func TestParseMarkdownTaskLine(t *testing.T) {
 	tests := []struct {
 		name     string

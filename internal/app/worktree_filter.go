@@ -1,7 +1,6 @@
 package app
 
 import (
-	"path/filepath"
 	"strings"
 
 	"github.com/chmouel/lazyworktree/internal/models"
@@ -44,10 +43,7 @@ func worktreeMatchesFilter(wt *models.WorktreeInfo, note models.WorktreeNote, ha
 		}
 	}
 
-	name := filepath.Base(wt.Path)
-	if wt.IsMain {
-		name = mainWorktreeName
-	}
+	name := worktreeDisplayName(wt)
 
 	baseHaystacks := []string{strings.ToLower(name), strings.ToLower(wt.Branch)}
 	if hasNote {

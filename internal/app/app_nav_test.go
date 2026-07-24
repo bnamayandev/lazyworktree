@@ -63,6 +63,41 @@ func TestWorktreeMatchesFilter(t *testing.T) {
 	}
 }
 
+func TestWorktreeDisplayName(t *testing.T) {
+	tests := []struct {
+		name     string
+		wt       *models.WorktreeInfo
+		expected string
+	}{
+		{
+			name:     "linked worktree uses directory name",
+			wt:       &models.WorktreeInfo{Path: "/repo/feature-auth", Branch: "feature/auth", IsMain: false},
+			expected: "feature-auth",
+		},
+		{
+			name:     "main worktree on the main branch shows the branch",
+			wt:       &models.WorktreeInfo{Path: "/repo", Branch: "main", IsMain: true},
+			expected: "main",
+		},
+		{
+			name:     "main worktree checked out on a feature branch shows that branch, not the fixed main label",
+			wt:       &models.WorktreeInfo{Path: "/repo", Branch: "feat/agent-integration", IsMain: true},
+			expected: "feat/agent-integration",
+		},
+		{
+			name:     "main worktree with no resolvable branch falls back to the main label",
+			wt:       &models.WorktreeInfo{Path: "/repo", Branch: "", IsMain: true},
+			expected: "main",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, worktreeDisplayName(tt.wt))
+		})
+	}
+}
+
 func TestUpdateTablePRColumnKeepsCompactStateIndicator(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.WorktreeDir = t.TempDir()
@@ -97,6 +132,26 @@ func TestUpdateTablePRColumnKeepsCompactStateIndicator(t *testing.T) {
 	if rows[1][3] != "-" {
 		t.Fatalf("expected no-PR row to keep placeholder, got %q", rows[1][3])
 	}
+}
+
+func TestUpdateTableMainWorktreeRowShowsCheckedOutBranch(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.WorktreeDir = t.TempDir()
+	cfg.IconSet = "text"
+	m := NewModel(cfg, "")
+	m.state.data.worktrees = []*models.WorktreeInfo{
+		{
+			Path:   cfg.WorktreeDir,
+			Branch: "feat/agent-integration",
+			IsMain: true,
+		},
+	}
+
+	m.updateTable()
+
+	rows := m.state.ui.worktreeTable.Rows()
+	require.Len(t, rows, 1)
+	assert.Contains(t, stripTerminalSequences(rows[0][0]), "feat/agent-integration")
 }
 
 // The worktree rows must always carry exactly one cell per configured column:

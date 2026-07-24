@@ -122,18 +122,6 @@ func DefaultConfig() *AppConfig {
 		Keybindings:             make(KeybindingsConfig),
 		CustomCommands: CustomCommandsConfig{
 			PaneUniversal: {
-				"t": {
-					Description: "Tmux",
-					ShowHelp:    true,
-					Tmux: &TmuxCommand{
-						SessionName: "wt:$WORKTREE_NAME",
-						Attach:      true,
-						OnExists:    "switch",
-						Windows: []TmuxWindow{
-							{Name: "shell"},
-						},
-					},
-				},
 				"Z": {
 					Description: "Zellij",
 					Zellij: &TmuxCommand{

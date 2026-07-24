@@ -381,6 +381,10 @@ type Model struct {
 		detailsCacheMu  sync.RWMutex
 	}
 	worktreesLoaded bool
+	// initialCwdSelectionDone tracks whether the startup attempt to highlight
+	// the worktree matching the launch directory has run, so it fires once
+	// (on the first non-empty load) rather than fighting manual navigation.
+	initialCwdSelectionDone bool
 
 	// Create from current state
 	createFromCurrent struct {

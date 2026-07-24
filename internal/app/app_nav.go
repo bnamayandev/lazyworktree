@@ -120,6 +120,22 @@ func (m *Model) startFilter(target filterTarget) tea.Cmd {
 	return textinput.Blink
 }
 
+// worktreeDisplayName returns the name shown for a worktree in the list,
+// filters, and jump-to-match search. The main worktree's directory name is
+// usually just the repo name (not a useful label), so it falls back to the
+// checked-out branch there instead of a fixed "main" placeholder — otherwise
+// checking out a feature branch directly in the primary worktree would still
+// display "main" everywhere, hiding the real branch.
+func worktreeDisplayName(wt *models.WorktreeInfo) string {
+	if wt.IsMain {
+		if wt.Branch != "" {
+			return wt.Branch
+		}
+		return mainWorktreeName
+	}
+	return filepath.Base(wt.Path)
+}
+
 func sortWorktrees(wts []*models.WorktreeInfo, mode int) {
 	switch mode {
 	case sortModeLastActive:
@@ -182,11 +198,10 @@ func (m *Model) updateTable() {
 	showAgentColumn := m.worktreeTableShowsAgentState()
 	rows := make([]table.Row, 0, len(m.state.data.filteredWts))
 	for idx, wt := range m.state.data.filteredWts {
-		name := filepath.Base(wt.Path)
+		name := worktreeDisplayName(wt)
 		worktreeIcon := UIIconWorktree
 		if wt.IsMain {
 			worktreeIcon = UIIconWorktreeMain
-			name = mainWorktreeName
 		}
 
 		prefix := iconPrefix(worktreeIcon, showIcons)
@@ -486,10 +501,7 @@ func (m *Model) findWorktreeMatchIndex(query string, start int, forward bool) in
 	hasPathSep := strings.Contains(lowerQuery, "/")
 	return findMatchIndex(len(m.state.data.filteredWts), start, forward, func(i int) bool {
 		wt := m.state.data.filteredWts[i]
-		name := filepath.Base(wt.Path)
-		if wt.IsMain {
-			name = mainWorktreeName
-		}
+		name := worktreeDisplayName(wt)
 		if strings.Contains(strings.ToLower(name), lowerQuery) {
 			return true
 		}
