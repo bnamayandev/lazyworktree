@@ -9,3 +9,23 @@ tmp/
 /tmp
 site/
 .worktrees/
+
+# goreleaser output
+/dist/
+/completions/
+
+# Go build/debug artifacts
+*.test
+debug
+__debug_bin*
+
+# OS-generated files
+.DS_Store
+
+# Editor/IDE
+.idea/
+.vscode/
+
+# Local env files
+.env
+.env.local
